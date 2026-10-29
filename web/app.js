@@ -188,9 +188,13 @@ async function cargarDelServidor() {
   }
 }
 
+let repetirSync = false;
+
 async function sincronizar() {
-  if (state.sincronizando || !conectado() || !state.online) return render();
+  if (state.sincronizando) { repetirSync = true; return; } // se vuelve a correr al terminar
+  if (!conectado() || !state.online) return render();
   state.sincronizando = true;
+  repetirSync = false;
   renderEstado();
   try {
     for (const item of await store.cola()) {
@@ -210,6 +214,7 @@ async function sincronizar() {
     state.cola = await store.cola();
     state.sincronizando = false;
     render();
+    if (repetirSync && !state.ultimoError) sincronizar();
   }
 }
 
@@ -541,6 +546,7 @@ $('#btnConectar').onclick = async () => {
   state.conexion = { url, token };
   await store.set('conexion', state.conexion);
   if (!conectado()) return render();
+  toast('Conectando… la primera vez puede tardar unos segundos');
   try {
     await cargarDelServidor();
     state.ultimoError = '';
