@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <title>Guía del Atajo</title>
+  <style>
+    :root {
+      --bg: #f4f6f5; --card: #fff; --text: #14201d; --muted: #64716d; --line: #e2e7e5;
+      --accent: #0f766e; --ios-bg: #f2f2f7; --ios-cell: #fff; --ios-blue: #007aff; --ios-line: #d1d1d6;
+      --hi: #fde68a; color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1412; --card: #17211e; --text: #e8efed; --muted: #93a29d; --line: #26332f;
+        --accent: #2dd4bf; --ios-bg: #000; --ios-cell: #1c1c1e; --ios-blue: #0a84ff; --ios-line: #38383a; --hi: #854d0e;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 16px) 16px 48px; }
+    a { color: var(--accent); }
+    h1 { font-size: 1.6rem; margin: 8px 0 4px; }
+    h2 { font-size: 1.15rem; margin: 0 0 6px; }
+    .sub { color: var(--muted); margin: 0 0 20px; }
+    .aviso { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin: 16px 0; font-size: .92rem; }
+    .paso { display: grid; grid-template-columns: 1fr; gap: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin: 16px 0; }
+    @media (min-width: 700px) { .paso { grid-template-columns: 1fr 280px; align-items: start; } }
+    .paso > div { min-width: 0; }
+    code, .tel .chip { overflow-wrap: anywhere; }
+    .num { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--bg); font-weight: 700; font-size: .9rem; margin-right: 8px; }
+    .paso ol, .paso ul { padding-left: 20px; margin: 8px 0 0; }
+    .paso li { margin: 4px 0; }
+    code { background: var(--ios-bg); padding: 1px 5px; border-radius: 5px; font-size: .88em; }
+
+    /* Maquetas de pantalla (no son capturas reales) */
+    .tel { width: 100%; max-width: 280px; margin: 0 auto; border: 8px solid #1f2937; border-radius: 32px; background: var(--ios-bg); overflow: hidden; font-size: 13px; color: var(--text); }
+    .tel .barra { height: 22px; display: flex; justify-content: center; align-items: center; }
+    .tel .barra::before { content: ""; width: 70px; height: 16px; border-radius: 10px; background: #1f2937; }
+    .tel .nav { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; color: var(--ios-blue); }
+    .tel .nav b { color: var(--text); }
+    .tel .titulo { font-size: 22px; font-weight: 700; padding: 2px 14px 8px; }
+    .tel .grupo { margin: 6px 10px 12px; background: var(--ios-cell); border-radius: 10px; overflow: hidden; }
+    .tel .cab { color: var(--muted); font-size: 11px; text-transform: uppercase; padding: 8px 20px 2px; }
+    .tel .celda { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--ios-line); }
+    .tel .celda:first-child { border-top: 0; }
+    .tel .celda .v { color: var(--muted); text-align: right; }
+    .tel .hi { background: var(--hi); }
+    .tel .chip { display: inline-block; background: var(--ios-blue); color: #fff; border-radius: 6px; padding: 1px 6px; font-size: 12px; }
+    .tel .chip.gris { background: #8e8e93; }
+    .tel .accion { margin: 8px 10px; background: var(--ios-cell); border-radius: 12px; padding: 10px 12px; line-height: 1.7; }
+    .tel .boton { margin: 10px; text-align: center; padding: 10px; border-radius: 10px; background: var(--ios-blue); color: #fff; font-weight: 600; }
+    .tel .check { color: var(--ios-blue); font-weight: 700; }
+    .tel .switch { width: 34px; height: 20px; border-radius: 10px; background: #34c759; position: relative; flex: none; }
+    .tel .switch::after { content: ""; position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+    .tel .switch.off { background: var(--ios-line); }
+    .tel .switch.off::after { right: auto; left: 2px; }
+    .tel .pie { height: 18px; }
+    .leyenda { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 6px; }
+    table { border-collapse: collapse; width: 100%; font-size: .9rem; margin-top: 8px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+  </style>
+</head>
+<body>
+<main>
+  <a href="./">‹ Volver a Gastos</a>
+  <h1>Registrar pagos de Apple Pay automáticamente</h1>
+  <p class="sub">Una automatización personal de Atajos se ejecuta cada vez que pagás con una tarjeta de Wallet y manda el gasto a tu Google Sheet.</p>
+
+  <div class="aviso">
+    <b>Antes de empezar:</b> necesitás iOS 17 o superior, una tarjeta en Wallet con Apple Pay, la <b>URL de tu web app</b> (la que termina en <code>/exec</code>) y tu <b>token</b>. Los dos están en Ajustes &gt; Conexión de esta app y en el README.
+    <br>Las pantallas de abajo son <b>maquetas ilustrativas</b>, no capturas reales: los nombres exactos pueden variar un poco según la versión de iOS y el idioma (por ejemplo "Monto" o "Importe").
+  </div>
+
+  <section class="paso">
+    <div>
+      <h2><span class="num">1</span>Crear la automatización</h2>
+      <ol>
+        <li>Abrí la app <b>Atajos</b>.</li>
+        <li>Abajo, tocá la pestaña <b>Automatización</b>.</li>
+        <li>Tocá <b>+</b> arriba a la derecha (o <b>Nueva automatización</b> si es la primera).</li>
+      </ol>
+    </div>
+    <div>
+      <div class="tel">
+        <div class="barra"></div>
+        <div class="nav"><span></span><span class="hi" style="font-size:20px;padding:0 6px;border-radius:6px">+</span></div>
+        <div class="titulo">Automatización</div>
+        <div class="grupo"><div class="celda"><span>Sin automatizaciones</span></div></div>
+        <div class="boton">Nueva automatización</div>
+        <div class="grupo" style="display:flex;justify-content:space-around;padding:8px 0;margin-top:60px">
+          <span class="v">Atajos</span><b style="color:var(--ios-blue)">Automatización</b><span class="v">Galería</span>
+        </div>
+        <div class="pie"></div>
+      </div>
+      <div class="leyenda">Maqueta · pestaña Automatización</div>
+    </div>
+  </section>
+
+  <section class="paso">
+    <div>
+      <h2><span class="num">2</span>Elegir el disparador "Transacción"</h2>
+      <ol>
+        <li>En la lista de disparadores, buscá o bajá hasta <b>Transacción</b> (ícono de Wallet).</li>
+        <li>Tocalo.</li>
+      </ol>
+    </div>
+    <div>
+      <div class="tel">
+        <div class="barra"></div>
+        <div class="nav"><span>Cancelar</span><b>Automatización</b><span></span></div>
+        <div class="grupo">
+          <div class="celda"><span>Hora del día</span></div>
+          <div class="celda"><span>Alarma</span></div>
+          <div class="celda"><span>Correo</span></div>
+          <div class="celda"><span>Mensaje</span></div>
+          <div class="celda hi"><span><b>Transacción</b></span><span class="v">›</span></div>
+          <div class="celda"><span>Wi‑Fi</span></div>
+          <div class="celda"><span>NFC</span></div>
+        </div>
+        <div class="pie"></div>
+      </div>
+      <div class="leyenda">Maqueta · lista de disparadores</div>
+    </div>
+  </section>
+
+  <section class="paso">
+    <div>
+      <h2><span class="num">3</span>Configurar el disparador</h2>
+      <ul>
+        <li><b>Tarjetas:</b> marcá las tarjetas que querés registrar.</li>
+        <li><b>Categorías / Comercios:</b> dejá <b>Cualquiera</b>.</li>
+        <li>Elegí <b>Ejecutar inmediatamente</b>. Si no, iOS te pide confirmar cada pago.</li>
+        <li><b>Notificar al ejecutarse:</b> como prefieras. Sirve para ver que funcionó.</li>
+        <li>Tocá <b>Siguiente</b>.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="tel">
+        <div class="barra"></div>
+        <div class="nav"><span>‹ Atrás</span><b>Transacción</b><span class="hi" style="padding:0 4px;border-radius:4px">Siguiente</span></div>
+        <div class="cab">Cuando toco</div>
+        <div class="grupo">
+          <div class="celda hi"><span>Visa ueno</span><span class="check">✓</span></div>
+          <div class="celda hi"><span>Mastercard Itaú</span><span class="check">✓</span></div>
+        </div>
+        <div class="grupo">
+          <div class="celda"><span>Categorías</span><span class="v">Cualquiera ›</span></div>
+          <div class="celda"><span>Comercios</span><span class="v">Cualquiera ›</span></div>
+        </div>
+        <div class="grupo">
+          <div class="celda"><span>Ejecutar tras confirmar</span><span></span></div>
+          <div class="celda hi"><span>Ejecutar inmediatamente</span><span class="check">✓</span></div>
+          <div class="celda"><span>Notificar al ejecutarse</span><span class="switch"></span></div>
+        </div>
+        <div class="pie"></div>
+      </div>
+      <div class="leyenda">Maqueta · las tarjetas son de ejemplo</div>
+    </div>
+  </section>
+
+  <section class="paso">
+    <div>
+      <h2><span class="num">4</span>Crear el atajo y agregar "Obtener contenido de URL"</h2>
+      <ol>
+        <li>Tocá <b>Crear atajo nuevo</b> (o <b>Nuevo atajo en blanco</b>).</li>
+        <li>Tocá <b>Agregar acción</b>, buscá <code>URL</code> y elegí <b>Obtener contenido de URL</b>.</li>
+        <li>Tocá el campo <b>URL</b> y pegá la URL de tu web app (<code>https://script.google.com/macros/s/…/exec</code>).</li>
+        <li>Tocá la flecha <b>›</b> de la acción para ver las opciones:
+          <ul>
+            <li><b>Método:</b> <code>POST</code></li>
+            <li><b>Encabezados:</b> no hace falta agregar ninguno.</li>
+            <li><b>Cuerpo de la solicitud:</b> <code>JSON</code></li>
+          </ul>
+        </li>
+      </ol>
+    </div>
+    <div>
+      <div class="tel">
+        <div class="barra"></div>
+        <div class="nav"><span></span><b>Registrar gasto</b><span>OK</span></div>
+        <div class="accion">
+          Obtener contenido de <span class="chip gris">https://script.google.com/macros/s/…/exec</span> <span class="v">›</span>
+        </div>
+        <div class="grupo">
+          <div class="celda hi"><span>Método</span><span class="v">POST</span></div>
+          <div class="celda"><span>Encabezados</span><span class="v">›</span></div>
+          <div class="celda hi"><span>Cuerpo de la solicitud</span><span class="v">JSON</span></div>
+        </div>
+        <div class="pie"></div>
+      </div>
+      <div class="leyenda">Maqueta · acción expandida</div>
+    </div>
+  </section>
+
+  <section class="paso">
+    <div>
+      <h2><span class="num">5</span>Armar los campos del JSON</h2>
+      <p>Debajo de "Cuerpo de la solicitud", tocá <b>Agregar nuevo campo &gt; Texto</b> una vez por cada fila:</p>
+      <table>
+        <tr><th>Clave</th><th>Tipo</th><th>Valor</th></tr>
+        <tr><td><code>token</code></td><td>Texto</td><td>tu token, escrito tal cual</td></tr>
+        <tr><td><code>monto</code></td><td>Texto</td><td>variable <b>Entrada del atajo → Monto</b></td></tr>
+        <tr><td><code>comercio</code></td><td>Texto</td><td>variable <b>Entrada del atajo → Comercio</b></td></tr>
+        <tr><td><code>tarjeta</code></td><td>Texto</td><td>variable <b>Entrada del atajo → Tarjeta o pase</b></td></tr>
+        <tr><td><code>origen</code></td><td>Texto</td><td><code>applepay</code></td></tr>
+      </table>
+      <p><b>Cómo insertar una variable:</b> tocá el valor, arriba del teclado elegí <b>Entrada del atajo</b> (puede aparecer como "Transacción"). Después tocá esa ficha azul y elegí la propiedad (Monto, Comercio o Tarjeta o pase).</p>
+      <p>El monto puede llegar como <code>₲150.000</code>, <code>PYG 150.000</code> o <code>150000</code>: el servidor lo limpia igual. Si la compra es en otra moneda, el gasto se guarda igual y queda marcado en "origen" para que lo revises.</p>
+    </div>
+    <div>
+      <div class="tel">
+        <div class="barra"></div>
+        <div class="nav"><span></span><b>Registrar gasto</b><span>OK</span></div>
+        <div class="cab">Cuerpo de la solicitud · JSON</div>
+        <div class="grupo">
+          <div class="celda"><span>token</span><span class="v">a1b2c3…</span></div>
+          <div class="celda hi"><span>monto</span><span><span class="chip">Entrada › Monto</span></span></div>
+          <div class="celda hi"><span>comercio</span><span><span class="chip">Entrada › Comercio</span></span></div>
+          <div class="celda hi"><span>tarjeta</span><span><span class="chip">Tarjeta o pase</span></span></div>
+          <div class="celda"><span>origen</span><span class="v">applepay</span></div>
+          <div class="celda" style="color:var(--ios-blue)"><span>+ Agregar nuevo campo</span></div>
+        </div>
+        <div class="pie"></div>
+      </div>
+      <div class="leyenda">Maqueta · campos del cuerpo</div>
+    </div>
+  </section>
+
+  <section class="paso">
+    <div>
+      <h2><span class="num">6</span>(Opcional) Ver una notificación con el resultado</h2>
+      <ol>
+        <li>Agregá la acción <b>Obtener valor de diccionario</b>. Configurala así: obtener <b>Valor</b> de la clave <code>mensaje</code> en <b>Contenido de URL</b>.</li>
+        <li>Agregá <b>Mostrar notificación</b> con la variable <b>Valor del diccionario</b>.</li>
+      </ol>
+      <p>Vas a ver, por ejemplo: <i>Gs 25.000 · STOCK MCAL LOPEZ → Supermercado</i>. Si en cambio dice algo como "No autorizado", revisá el token.</p>
+      <p>Tocá <b>OK</b> para guardar la automatización.</p>
+    </div>
+    <div>
+      <div class="tel">
+        <div class="barra"></div>
+        <div class="nav"><span></span><b>Registrar gasto</b><span class="hi" style="padding:0 4px;border-radius:4px">OK</span></div>
+        <div class="accion">Obtener contenido de <span class="chip gris">…/exec</span></div>
+        <div class="accion hi">Obtener <span class="chip">Valor</span> para <span class="chip gris">mensaje</span> en <span class="chip">Contenido de URL</span></div>
+        <div class="accion hi">Mostrar notificación <span class="chip">Valor del diccionario</span></div>
+        <div class="pie"></div>
+      </div>
+      <div class="leyenda">Maqueta · atajo completo</div>
+    </div>
+  </section>
+
+  <section class="paso" style="grid-template-columns:1fr">
+    <div>
+      <h2><span class="num">7</span>Probar</h2>
+      <ul>
+        <li>Lo más simple: hacé un pago chico con Apple Pay y fijate que aparezca en la app y en la hoja <b>Gastos</b>.</li>
+        <li>Si lo ejecutás a mano desde el editor de Atajos no hay transacción, así que "Entrada del atajo" llega vacía y el servidor responde <i>Monto inválido</i>. Eso es lo esperado.</li>
+        <li>El atajo necesita internet en el momento del pago. Si no había señal, ese gasto no se registra y hay que cargarlo a mano.</li>
+        <li>Para ver errores: Atajos &gt; Automatización &gt; tu automatización. También podés activar "Notificar al ejecutarse".</li>
+      </ul>
+    </div>
+  </section>
+</main>
+</body>
+</html>

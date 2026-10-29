@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Gastos">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <title>Gastos</title>
+</head>
+<body>
+  <header class="top">
+    <div class="mes">
+      <button id="mesPrev" class="icono" aria-label="Mes anterior">‹</button>
+      <h1 id="mesLabel">—</h1>
+      <button id="mesNext" class="icono" aria-label="Mes siguiente">›</button>
+    </div>
+    <button id="estado" class="estado" type="button"></button>
+  </header>
+
+  <main>
+    <section id="vista-gastos" class="vista">
+      <div class="tarjeta total">
+        <span>Total del mes</span>
+        <strong id="totalMes">Gs 0</strong>
+        <small id="totalPresupuesto"></small>
+      </div>
+      <ul id="listaGastos" class="lista"></ul>
+      <p id="vacio" class="vacio" hidden>No hay gastos este mes.<br>Tocá <b>+</b> para registrar uno.</p>
+    </section>
+
+    <section id="vista-resumen" class="vista" hidden>
+      <div class="tarjeta">
+        <h2>Por categoría</h2>
+        <div id="grafico" class="grafico"></div>
+      </div>
+    </section>
+
+    <section id="vista-ajustes" class="vista" hidden>
+      <div class="tarjeta">
+        <h2>Conexión</h2>
+        <label><span>URL de la web app (termina en <code>/exec</code>)</span>
+          <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </label>
+        <label>Token secreto
+          <input id="cfgToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </label>
+        <button id="btnConectar" class="btn primario">Guardar y probar</button>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Categorías</h2>
+        <ul id="listaCategorias" class="editable"></ul>
+        <button id="btnAddCategoria" class="btn">+ Categoría</button>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Presupuesto mensual</h2>
+        <p class="ayuda">Dejá vacío o en 0 si no querés límite para esa categoría.</p>
+        <ul id="listaPresupuestos" class="editable"></ul>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Reglas por comercio</h2>
+        <p class="ayuda">Si el comercio contiene el texto (sin importar mayúsculas ni tildes), se asigna la categoría. Gana la primera regla que coincide.</p>
+        <ul id="listaReglas" class="editable"></ul>
+        <button id="btnAddRegla" class="btn">+ Regla</button>
+      </div>
+
+      <div class="guardar-config" id="barraGuardar" hidden>
+        <button id="btnGuardarConfig" class="btn primario">Guardar cambios</button>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Exportar</h2>
+        <div class="fila-botones">
+          <button id="btnCsvMes" class="btn">CSV del mes</button>
+          <button id="btnCsvTodo" class="btn">CSV completo</button>
+        </div>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Apple Pay</h2>
+        <p class="ayuda">Registrá cada pago con Apple Pay automáticamente con un Atajo de iOS.</p>
+        <a class="btn" href="guia-atajo.html">Ver guía del Atajo</a>
+      </div>
+    </section>
+  </main>
+
+  <button id="fab" class="fab" aria-label="Nuevo gasto">+</button>
+
+  <nav class="tabs">
+    <button data-vista="gastos" class="activa"><span aria-hidden="true">☰</span>Gastos</button>
+    <button data-vista="resumen"><span aria-hidden="true">◔</span>Resumen</button>
+    <button data-vista="ajustes"><span aria-hidden="true">⚙</span>Ajustes</button>
+  </nav>
+
+  <dialog id="dlgGasto">
+    <form id="formGasto" method="dialog">
+      <h2 id="dlgTitulo">Nuevo gasto</h2>
+      <label>Monto (Gs)
+        <input id="fMonto" inputmode="numeric" autocomplete="off" placeholder="0" required>
+      </label>
+      <label>Comercio
+        <input id="fComercio" autocomplete="off" placeholder="Ej: Stock">
+      </label>
+      <label>Categoría
+        <select id="fCategoria"></select>
+      </label>
+      <label>Tarjeta
+        <input id="fTarjeta" list="tarjetas" autocomplete="off" placeholder="Ej: Visa ueno">
+        <datalist id="tarjetas"></datalist>
+      </label>
+      <label>Fecha y hora
+        <input id="fFecha" type="datetime-local" required>
+      </label>
+      <div class="acciones">
+        <button type="button" id="btnBorrar" class="btn peligro" hidden>Borrar</button>
+        <span class="espacio"></span>
+        <button type="button" id="btnCancelar" class="btn">Cancelar</button>
+        <button type="submit" class="btn primario">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
