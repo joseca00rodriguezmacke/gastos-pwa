@@ -1,6 +1,6 @@
 // Service worker: deja la app disponible offline.
 // Subí VERSION en cada despliegue para que los dispositivos tomen los archivos nuevos.
-const VERSION = 'gastos-v2';
+const VERSION = 'gastos-v3';
 const SHELL = [
   './',
   'index.html',
@@ -15,7 +15,9 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' saltea la caché HTTP (GitHub Pages cachea 10 min) y trae la versión nueva.
+  const pedidos = SHELL.map((u) => new Request(u, { cache: 'reload' }));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(pedidos)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -35,7 +37,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.open(VERSION).then(async (cache) => {
       const cacheado = await cache.match(e.request, { ignoreSearch: true });
-      const red = fetch(e.request)
+      const red = fetch(e.request.url, { cache: 'no-cache' })
         .then((r) => { if (r.ok) cache.put(e.request, r.clone()); return r; })
         .catch(() => null);
       if (cacheado) return cacheado;
