@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f766e">
+  <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0a0c0f" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -16,119 +17,221 @@
 </head>
 <body>
   <header class="top">
-    <div class="mes">
-      <button id="mesPrev" class="icono" aria-label="Mes anterior">‹</button>
-      <h1 id="mesLabel">—</h1>
-      <button id="mesNext" class="icono" aria-label="Mes siguiente">›</button>
+    <div class="top-fila">
+      <div class="saludo">
+        <span id="saludo" class="saludo-hola">Hola</span>
+        <h1 id="tituloVista">Inicio</h1>
+      </div>
+      <button id="estado" class="estado" type="button" aria-label="Estado de sincronización"><i></i><span></span></button>
     </div>
-    <button id="estado" class="estado" type="button"></button>
+    <div class="selector-mes" id="selectorMes">
+      <button id="mesPrev" class="mes-btn" aria-label="Mes anterior">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <span id="mesLabel">—</span>
+      <button id="mesNext" class="mes-btn" aria-label="Mes siguiente">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>
   </header>
 
-  <main>
-    <section id="vista-gastos" class="vista">
-      <div class="tarjeta total">
-        <span>Total del mes</span>
-        <strong id="totalMes">Gs 0</strong>
-        <small id="totalPresupuesto"></small>
+  <main id="main">
+    <!-- INICIO -->
+    <section id="vista-inicio" class="vista">
+      <article class="hero" id="hero">
+        <div class="hero-cab">
+          <span id="heroEtiqueta">Gastado este mes</span>
+          <span id="heroDelta" class="delta"></span>
+        </div>
+        <div class="hero-monto"><small>Gs</small><span id="heroMonto">0</span></div>
+        <div class="hero-pres" id="heroPres">
+          <div class="hero-track"><div id="heroBarra" class="hero-relleno"></div><div id="heroMarca" class="hero-hoy" title="Hoy"></div></div>
+          <div class="hero-pie"><span id="heroPresTxt"></span><span id="heroProy"></span></div>
+        </div>
+      </article>
+
+      <div class="kpis">
+        <div class="kpi"><span>Por día</span><b id="kpiDiario">—</b></div>
+        <div class="kpi"><span>Gastos</span><b id="kpiCant">—</b></div>
+        <div class="kpi"><span>Ticket prom.</span><b id="kpiTicket">—</b></div>
       </div>
-      <ul id="listaGastos" class="lista"></ul>
-      <p id="vacio" class="vacio" hidden>No hay gastos este mes.<br>Tocá <b>+</b> para registrar uno.</p>
+
+      <article class="card">
+        <div class="card-cab">
+          <h2>Ritmo del mes</h2>
+          <div class="leyenda">
+            <span><i class="ley-linea actual"></i><em id="leyActual">Este mes</em></span>
+            <span><i class="ley-linea previo"></i><em id="leyPrevio">Mes anterior</em></span>
+          </div>
+        </div>
+        <div id="graficoRitmo" class="grafico-caja"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-cab"><h2>Por categoría</h2><button class="link" data-ir="movimientos">Ver todo</button></div>
+        <div class="dona-fila">
+          <div id="dona" class="dona"></div>
+          <ul id="donaLeyenda" class="dona-leyenda"></ul>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-cab"><h2>Últimos 6 meses</h2><span class="sub" id="promedio6"></span></div>
+        <div id="graficoMeses" class="grafico-caja"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-cab"><h2>Donde más gastás</h2></div>
+        <ol id="topComercios" class="top-lista"></ol>
+      </article>
+
+      <article class="card">
+        <div class="card-cab"><h2>Últimos movimientos</h2><button class="link" data-ir="movimientos">Ver todos</button></div>
+        <ul id="ultimos" class="mov-lista"></ul>
+      </article>
     </section>
 
-    <section id="vista-resumen" class="vista" hidden>
-      <div class="tarjeta">
-        <h2>Por categoría</h2>
-        <div id="grafico" class="grafico"></div>
+    <!-- MOVIMIENTOS -->
+    <section id="vista-movimientos" class="vista" hidden>
+      <div class="buscador">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="buscar" type="search" placeholder="Buscar comercio, tarjeta…" autocomplete="off" enterkeyhint="search">
+      </div>
+      <div id="filtros" class="chips"></div>
+      <div class="resumen-mov"><span id="movCant"></span><b id="movTotal"></b></div>
+      <div id="listaMov"></div>
+      <div id="vacioMov" class="vacio" hidden>
+        <div class="vacio-icono">🧾</div>
+        <p>No hay movimientos acá todavía.</p>
+        <button class="btn primario" data-nuevo>Registrar un gasto</button>
       </div>
     </section>
 
+    <!-- PRESUPUESTO -->
+    <section id="vista-presupuesto" class="vista" hidden>
+      <article class="card pres-total">
+        <div id="anillo" class="anillo"></div>
+        <div class="pres-total-txt">
+          <span id="presEtiqueta">Disponible</span>
+          <b id="presDisp">—</b>
+          <small id="presDe"></small>
+          <small id="presRitmo" class="ritmo"></small>
+        </div>
+      </article>
+      <p class="ayuda">Tocá una categoría para ponerle o cambiarle el límite mensual.</p>
+      <ul id="listaPres" class="pres-lista"></ul>
+    </section>
+
+    <!-- AJUSTES -->
     <section id="vista-ajustes" class="vista" hidden>
-      <div class="tarjeta">
+      <article class="card">
         <h2>Conexión</h2>
         <label><span>URL de la web app (termina en <code>/exec</code>)</span>
           <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" autocapitalize="off" spellcheck="false">
         </label>
-        <label>Token secreto
+        <label><span>Token secreto</span>
           <input id="cfgToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
         </label>
-        <button id="btnConectar" class="btn primario">Guardar y probar</button>
-      </div>
+        <button id="btnConectar" class="btn primario ancho">Guardar y probar</button>
+      </article>
 
-      <div class="tarjeta">
+      <article class="card">
         <h2>Categorías</h2>
         <ul id="listaCategorias" class="editable"></ul>
-        <button id="btnAddCategoria" class="btn">+ Categoría</button>
-      </div>
+        <button id="btnAddCategoria" class="btn ancho">+ Agregar categoría</button>
+      </article>
 
-      <div class="tarjeta">
-        <h2>Presupuesto mensual</h2>
-        <p class="ayuda">Dejá vacío o en 0 si no querés límite para esa categoría.</p>
-        <ul id="listaPresupuestos" class="editable"></ul>
-      </div>
-
-      <div class="tarjeta">
+      <article class="card">
         <h2>Reglas por comercio</h2>
-        <p class="ayuda">Si el comercio contiene el texto (sin importar mayúsculas ni tildes), se asigna la categoría. Gana la primera regla que coincide.</p>
+        <p class="ayuda">Si el comercio contiene el texto (sin importar mayúsculas ni tildes), se asigna la categoría. Gana la primera que coincide.</p>
         <ul id="listaReglas" class="editable"></ul>
-        <button id="btnAddRegla" class="btn">+ Regla</button>
-      </div>
+        <button id="btnAddRegla" class="btn ancho">+ Agregar regla</button>
+      </article>
 
       <div class="guardar-config" id="barraGuardar" hidden>
-        <button id="btnGuardarConfig" class="btn primario">Guardar cambios</button>
+        <button id="btnGuardarConfig" class="btn primario ancho">Guardar cambios</button>
       </div>
 
-      <div class="tarjeta">
+      <article class="card">
         <h2>Exportar</h2>
         <div class="fila-botones">
           <button id="btnCsvMes" class="btn">CSV del mes</button>
           <button id="btnCsvTodo" class="btn">CSV completo</button>
         </div>
-      </div>
+      </article>
 
-      <div class="tarjeta">
+      <article class="card">
         <h2>Apple Pay</h2>
         <p class="ayuda">Registrá cada pago con Apple Pay automáticamente con un Atajo de iOS.</p>
-        <a class="btn" href="guia-atajo.html">Ver guía del Atajo</a>
-      </div>
+        <a class="btn ancho" href="guia-atajo.html">Ver guía del Atajo</a>
+      </article>
     </section>
   </main>
 
-  <button id="fab" class="fab" aria-label="Nuevo gasto">+</button>
-
-  <nav class="tabs">
-    <button data-vista="gastos" class="activa"><span aria-hidden="true">☰</span>Gastos</button>
-    <button data-vista="resumen"><span aria-hidden="true">◔</span>Resumen</button>
-    <button data-vista="ajustes"><span aria-hidden="true">⚙</span>Ajustes</button>
+  <nav class="tabs" aria-label="Secciones">
+    <button data-vista="inicio" class="activa">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v8a1 1 0 01-1 1h-4v-6h-6v6H5a1 1 0 01-1-1z"/></svg><span>Inicio</span>
+    </button>
+    <button data-vista="movimientos">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg><span>Movimientos</span>
+    </button>
+    <button class="tab-mas" data-nuevo aria-label="Nuevo gasto">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button data-vista="presupuesto">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4v8l5.5 5.5"/></svg><span>Presupuesto</span>
+    </button>
+    <button data-vista="ajustes">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1M18.7 18.7l-2.1-2.1M7.4 7.4L5.3 5.3"/></svg><span>Ajustes</span>
+    </button>
   </nav>
 
-  <dialog id="dlgGasto">
-    <form id="formGasto" method="dialog">
-      <h2 id="dlgTitulo">Nuevo gasto</h2>
-      <label>Monto (Gs)
-        <input id="fMonto" inputmode="numeric" autocomplete="off" placeholder="0" required>
-      </label>
-      <label>Comercio
-        <input id="fComercio" autocomplete="off" placeholder="Ej: Stock">
-      </label>
-      <label>Categoría
-        <select id="fCategoria"></select>
-      </label>
-      <label>Tarjeta
-        <input id="fTarjeta" list="tarjetas" autocomplete="off" placeholder="Ej: Visa ueno">
-        <datalist id="tarjetas"></datalist>
-      </label>
-      <label>Fecha y hora
-        <input id="fFecha" type="datetime-local" required>
-      </label>
-      <div class="acciones">
-        <button type="button" id="btnBorrar" class="btn peligro" hidden>Borrar</button>
-        <span class="espacio"></span>
-        <button type="button" id="btnCancelar" class="btn">Cancelar</button>
-        <button type="submit" class="btn primario">Guardar</button>
+  <!-- Hoja de carga -->
+  <div id="hoja" class="hoja" hidden>
+    <div class="hoja-fondo" data-cerrar></div>
+    <form id="formGasto" class="hoja-panel" autocomplete="off">
+      <div class="hoja-asa"></div>
+      <div class="hoja-cab">
+        <button type="button" class="link" data-cerrar>Cancelar</button>
+        <b id="hojaTitulo">Nuevo gasto</b>
+        <button type="button" id="btnBorrar" class="link peligro" hidden>Borrar</button>
       </div>
+      <div class="monto-grande" id="montoGrande"><small>Gs</small><span id="montoTxt">0</span></div>
+      <input id="fComercio" class="input-comercio" placeholder="¿Dónde? Ej: Stock" autocomplete="off" enterkeyhint="done">
+      <div id="catChips" class="cat-chips"></div>
+      <div class="detalles">
+        <label><span>Tarjeta</span><input id="fTarjeta" list="tarjetas" placeholder="Opcional"><datalist id="tarjetas"></datalist></label>
+        <label><span>Fecha</span><input id="fFecha" type="datetime-local" required></label>
+      </div>
+      <div class="teclado" id="teclado">
+        <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button>
+        <button type="button" data-k="4">4</button><button type="button" data-k="5">5</button><button type="button" data-k="6">6</button>
+        <button type="button" data-k="7">7</button><button type="button" data-k="8">8</button><button type="button" data-k="9">9</button>
+        <button type="button" data-k="000">000</button><button type="button" data-k="0">0</button>
+        <button type="button" data-k="del" aria-label="Borrar dígito"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11v12H9l-6-6z"/><path d="M13 10l4 4M17 10l-4 4"/></svg></button>
+      </div>
+      <button type="submit" class="btn primario ancho guardar" id="btnGuardar">Guardar gasto</button>
     </form>
-  </dialog>
+  </div>
 
+  <!-- Editor de presupuesto -->
+  <div id="hojaPres" class="hoja" hidden>
+    <div class="hoja-fondo" data-cerrar></div>
+    <form id="formPres" class="hoja-panel chico">
+      <div class="hoja-asa"></div>
+      <div class="hoja-cab">
+        <button type="button" class="link" data-cerrar>Cancelar</button>
+        <b id="presTitulo">Presupuesto</b>
+        <span></span>
+      </div>
+      <label><span>Límite mensual (Gs). Dejalo vacío para quitarlo.</span>
+        <input id="fPres" inputmode="numeric" placeholder="Sin límite">
+      </label>
+      <button type="submit" class="btn primario ancho">Guardar</button>
+    </form>
+  </div>
+
+  <div id="tooltip" class="tooltip" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
 
   <script type="module" src="app.js"></script>
