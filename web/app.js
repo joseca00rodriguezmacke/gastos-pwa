@@ -347,6 +347,54 @@ function totalesPorCategoria(gastos) {
   return [...tot.entries()].map(([categoria, total]) => ({ categoria, total })).sort((a, b) => b.total - a.total);
 }
 
+// ---------- Posibles duplicados ----------
+
+const VENTANA_DUP_MIN = 10;
+const minutos = (fecha) => {
+  const [d, h = '00:00'] = fecha.split(' ');
+  const [a, m, dd] = d.split('-').map(Number);
+  const [hh, mm] = h.split(':').map(Number);
+  return new Date(a, m - 1, dd, hh, mm).getTime() / 60000;
+};
+const mismoComercio = (a, b) => {
+  const x = normalizar(a);
+  const y = normalizar(b);
+  return !x || !y || x === y || x.includes(y) || y.includes(x);
+};
+const clavePar = (a, b) => [a.id, b.id].sort().join('|');
+
+function ignoradosDup() {
+  try { return new Set(JSON.parse(localStorage.getItem('dupIgnorados') || '[]')); } catch { return new Set(); }
+}
+function ignorarDup(clave) {
+  const s = ignoradosDup();
+  s.add(clave);
+  localStorageSet('dupIgnorados', JSON.stringify([...s]));
+}
+
+/** Pares con el mismo monto y comercio parecido a pocos minutos de diferencia. */
+function posiblesDuplicados(gastos) {
+  const ignorados = ignoradosDup();
+  const orden = [...gastos].sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const pares = [];
+  for (let i = 0; i < orden.length; i++) {
+    for (let j = i + 1; j < orden.length; j++) {
+      const a = orden[i];
+      const b = orden[j];
+      if (minutos(b.fecha) - minutos(a.fecha) > VENTANA_DUP_MIN) break;
+      if (a.monto === b.monto && mismoComercio(a.comercio, b.comercio) && !ignorados.has(clavePar(a, b))) pares.push([a, b]);
+    }
+  }
+  return pares;
+}
+
+/** Gasto ya registrado que parece el mismo que se está por guardar (para avisar antes). */
+function gastoParecido(nuevo) {
+  const t = minutos(nuevo.fecha);
+  return gastosTodos().find((g) => g.id !== nuevo.id && g.monto === nuevo.monto &&
+    Math.abs(minutos(g.fecha) - t) <= VENTANA_DUP_MIN * 1.5 && mismoComercio(g.comercio, nuevo.comercio));
+}
+
 const presupuestoDe = (cat) => Number(state.config.presupuestos.find((p) => p.categoria === cat)?.monto) || 0;
 const presupuestoTotal = () => state.config.presupuestos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
 
@@ -420,6 +468,9 @@ const firmaDatos = (gastos) => gastos.map((g) => g.id + g.monto + g.categoria + 
 function renderInicio() {
   const todos = gastosTodos();
   const mes = state.mes;
+  const dups = posiblesDuplicados(delMes(todos, mes));
+  $('#alertaDup').hidden = !dups.length;
+  $('#alertaDupTit').textContent = dups.length === 1 ? '1 posible gasto duplicado' : `${dups.length} posibles gastos duplicados`;
   if (sinCambios('inicio', mes, firmaDatos(todos), state.config, $('#graficoRitmo').clientWidth, new Date().getDate())) return;
   const previo = moverMes(mes, -1);
   const actuales = delMes(todos, mes);
@@ -744,19 +795,35 @@ function renderTopComercios(gastos) {
   }));
 }
 
-function filaMovimiento(g) {
+function filaMovimiento(g, { dudosos, accion } = {}) {
   const color = colorDe(g.categoria);
   const meta = [g.categoria, g.tarjeta, g.fecha.slice(11, 16)];
   if (g.origen && g.origen !== 'manual') meta.push(g.origen === 'applepay' ? 'Apple Pay' : g.origen);
-  return el('li', { class: 'mov' + (g.id === state.recienGuardado ? ' nuevo' : ''), onclick: () => abrirGasto(g) },
+  return el('li', { class: 'mov' + (g.id === state.recienGuardado ? ' nuevo' : ''), onclick: accion ? null : () => abrirGasto(g) },
     el('span', { class: 'ico', style: fondoIcono(color) }, iconoDe(g.categoria)),
     el('div', { class: 'info' },
-      el('div', { class: 'com' }, nombreBonito(g.comercio) || 'Sin comercio'),
+      el('div', { class: 'com' }, nombreBonito(g.comercio) || 'Sin comercio', dudosos?.has(g.id) ? el('span', { class: 'tag-dup' }, '¿duplicado?') : null),
       el('div', { class: 'meta' }, meta.filter(Boolean).join(' · ')),
     ),
-    el('div', { class: 'monto' }, gs(g.monto), g.pendiente ? el('small', {}, 'pendiente') : null),
+    accion || el('div', { class: 'monto' }, gs(g.monto), g.pendiente ? el('small', {}, 'pendiente') : null),
   );
 }
+
+function abrirDuplicados() {
+  const pares = posiblesDuplicados(delMes(gastosTodos(), state.mes));
+  if (!pares.length) { cerrarHoja($('#hojaDup')); toast('No quedan duplicados por revisar ✓'); render(); return; }
+  $('#listaDup').replaceChildren(...pares.map(([a, b]) => el('div', { class: 'dup-par' },
+    el('ul', { class: 'mov-lista' }, [a, b].map((g) => filaMovimiento(g, {
+      accion: el('div', { class: 'monto' }, gs(g.monto), el('button', {
+        class: 'borrar', type: 'button',
+        onclick: async () => { vibrar(10); await encolar({ accion: 'borrar', id: g.id }); toast('Gasto borrado'); abrirDuplicados(); },
+      }, 'Borrar')),
+    }))),
+    el('button', { class: 'btn ancho no-dup', type: 'button', onclick: () => { ignorarDup(clavePar(a, b)); firmas.inicio = ''; abrirDuplicados(); } }, 'No es duplicado'),
+  )));
+  if ($('#hojaDup').hidden) abrirHoja($('#hojaDup'));
+}
+$('#alertaDup').addEventListener('click', abrirDuplicados);
 
 // ---------- Movimientos ----------
 
@@ -771,6 +838,7 @@ function renderMovimientos() {
   }, etiqueta);
   $('#filtros').replaceChildren(chip('', 'Todas'), ...cats.map((c) => chip(c, `${iconoDe(c)} ${c}`)));
 
+  const dudosos = new Set(posiblesDuplicados(delMesActual).flat().map((g) => g.id));
   const q = normalizar(state.busqueda);
   const lista = delMesActual.filter((g) =>
     (!state.filtroCat || g.categoria === state.filtroCat) &&
@@ -794,7 +862,7 @@ function renderMovimientos() {
     const etiqueta = dia === hoy ? 'Hoy' : dia === ayer ? 'Ayer' : new Date(a, m - 1, d).toLocaleDateString('es-PY', { weekday: 'long', day: 'numeric', month: 'short' });
     cont.append(el('div', { class: 'grupo-dia' },
       el('div', { class: 'cab-dia' }, el('span', {}, etiqueta), el('span', {}, gs(suma(gastos)))),
-      el('ul', { class: 'mov-lista' }, gastos.map(filaMovimiento)),
+      el('ul', { class: 'mov-lista' }, gastos.map((g) => filaMovimiento(g, { dudosos }))),
     ));
   }
   $('#vacioMov').hidden = lista.length > 0;
@@ -933,7 +1001,8 @@ function renderAjustes() {
 function abrirHoja(h) {
   h.hidden = false;
   document.body.style.overflow = 'hidden';
-  requestAnimationFrame(() => requestAnimationFrame(() => h.classList.add('abierta')));
+  void h.offsetWidth; // fuerza el layout para que la transición de entrada arranque
+  h.classList.add('abierta');
 }
 function cerrarHoja(h) {
   h.classList.remove('abierta');
@@ -1054,6 +1123,9 @@ $('#formGasto').addEventListener('submit', async (ev) => {
     categoria: form.manual ? form.categoria : categorizar(comercio),
     origen: g?.origen || 'manual',
   };
+  const parecido = !g && gastoParecido(gasto);
+  if (parecido && !confirm(`Ya hay un gasto de ${gs(parecido.monto)} en ${nombreBonito(parecido.comercio) || 'sin comercio'} a las ${parecido.fecha.slice(11, 16)}` +
+    `${parecido.origen === 'applepay' ? ' (entró por Apple Pay)' : ''}.\n\n¿Guardar este de todos modos?`)) return;
   if (gasto.tarjeta) localStorageSet('ultimaTarjeta', gasto.tarjeta);
   state.recienGuardado = gasto.id;
   setTimeout(() => { state.recienGuardado = ''; }, 1500);

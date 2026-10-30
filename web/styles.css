@@ -158,6 +158,27 @@ main { max-width: 640px; margin: 0 auto; padding: 8px 16px; }
 .hero-pie { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: .78rem; opacity: .88; }
 .hero-pie span:last-child { text-align: right; }
 
+/* ---------- Alerta de duplicados ---------- */
+.alerta {
+  display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: center; text-align: left; width: 100%;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent); background: color-mix(in srgb, var(--warning) 12%, var(--card));
+  border-radius: 18px; padding: 12px 14px; animation: entrar .3s var(--ease); transition: transform .15s var(--ease);
+}
+.alerta:active { transform: scale(.985); }
+.alerta-ico { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: var(--warning); color: #3a2600; font-weight: 800; }
+.alerta-txt { display: grid; gap: 1px; min-width: 0; }
+.alerta-txt b { font-size: .9rem; }
+.alerta-txt small { color: var(--text-2); font-size: .76rem; }
+.alerta-cta { font-weight: 700; font-size: .84rem; color: var(--text); }
+.tag-dup { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: .64rem; font-weight: 700; vertical-align: 1px; background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--text); }
+.dup-ayuda { margin: 4px 0 12px; }
+.dup-lista { display: grid; gap: 12px; padding-bottom: 8px; }
+.dup-par { background: var(--card-2); border-radius: 18px; padding: 6px 12px 12px; }
+.dup-par .mov { cursor: default; grid-template-columns: 42px 1fr auto; }
+.dup-par .mov:active { transform: none; background: transparent; }
+.dup-par .borrar { border: 0; background: color-mix(in srgb, var(--critical) 14%, transparent); color: var(--critical); font-weight: 700; font-size: .78rem; padding: 7px 10px; border-radius: 10px; }
+.dup-par .no-dup { width: 100%; margin-top: 6px; }
+
 /* ---------- KPIs ---------- */
 .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .kpi { background: var(--card); border-radius: 18px; padding: 12px 12px 13px; box-shadow: var(--sombra); min-width: 0; }

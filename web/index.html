@@ -38,6 +38,11 @@
   <main id="main">
     <!-- INICIO -->
     <section id="vista-inicio" class="vista">
+      <button id="alertaDup" class="alerta" type="button" hidden>
+        <span class="alerta-ico">⚠︎</span>
+        <span class="alerta-txt"><b id="alertaDupTit"></b><small>Puede que un pago se haya registrado dos veces.</small></span>
+        <span class="alerta-cta">Revisar</span>
+      </button>
       <article class="hero" id="hero">
         <div class="hero-cab">
           <span id="heroEtiqueta">Gastado este mes</span>
@@ -229,6 +234,21 @@
       </label>
       <button type="submit" class="btn primario ancho">Guardar</button>
     </form>
+  </div>
+
+  <!-- Revisión de duplicados -->
+  <div id="hojaDup" class="hoja" hidden>
+    <div class="hoja-fondo" data-cerrar></div>
+    <div class="hoja-panel">
+      <div class="hoja-asa"></div>
+      <div class="hoja-cab">
+        <span></span>
+        <b>Posibles duplicados</b>
+        <button type="button" class="link" data-cerrar>Listo</button>
+      </div>
+      <p class="ayuda dup-ayuda">Mismo monto y comercio con pocos minutos de diferencia. Borrá el que sobra o marcá que no es duplicado.</p>
+      <div id="listaDup" class="dup-lista"></div>
+    </div>
   </div>
 
   <div id="tooltip" class="tooltip" hidden></div>

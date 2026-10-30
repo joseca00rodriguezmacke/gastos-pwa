@@ -10,6 +10,14 @@
  *                                   o los campos del gasto sueltos (así lo manda el Atajo de iOS)
  *   accion "borrar":  { id }
  *   accion "config":  { config: { categorias?, reglas?, presupuestos? } }
+ *   accion "lote" (o si viene "lineas"): { lineas: "un gasto JSON por línea" }
+ *                                   la cola del Atajo de iOS: reenviar es seguro, no duplica.
+ *
+ * Los campos del gasto aceptan alias en inglés (amount, merchant, card_or_pass) y
+ * "momento" (AAAA-MM-DD HH:mm:ss) como fecha; con momento y sin id, el id sale del contenido.
+ *
+ * Respaldo: ejecutar instalarRespaldo() una vez; copia la planilla cada domingo a la
+ * carpeta "Gastos - respaldos" de Drive y guarda las últimas 8 copias.
  */
 
 const TZ = 'America/Asuncion';
@@ -98,6 +106,17 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
+      if (accion === 'lote' || body.lineas !== undefined) {
+        const guardados = guardarLote(body.lineas);
+        if (!guardados.length) throw new Error('No llegó ningún gasto válido');
+        const ultimo = guardados[guardados.length - 1];
+        return {
+          ok: true,
+          guardados: guardados.length,
+          mensaje: 'Gs ' + formatearGs(ultimo.monto) + ' · ' + (ultimo.comercio || 'sin comercio') + ' → ' + ultimo.categoria +
+            (guardados.length > 1 ? ' (+' + (guardados.length - 1) + ' pendientes enviados)' : ''),
+        };
+      }
       if (accion === 'guardar') {
         const gasto = guardarGasto(body.gasto || body);
         return {
@@ -123,22 +142,26 @@ function doPost(e) {
 // ---------- Gastos ----------
 
 function guardarGasto(g) {
-  const textoMonto = String(g.monto == null ? '' : g.monto);
-  const monto = parsearMonto(g.monto);
+  const crudo = primero(g.monto, g.amount, g.importe);
+  const textoMonto = String(crudo == null ? '' : crudo);
+  const monto = parsearMonto(crudo);
   if (!monto) throw new Error('Monto inválido: ' + textoMonto);
 
-  const comercio = String(g.comercio || '').trim();
+  const comercio = String(primero(g.comercio, g.merchant) || '').trim();
+  const tarjeta = String(primero(g.tarjeta, g.card_or_pass, g.card, g.tarjeta_o_pase) || '').trim();
+  const momento = String(g.momento || '').trim();
   let origen = String(g.origen || 'manual').trim();
   if (esMonedaExtranjera(textoMonto)) origen += ' · moneda extranjera: ' + textoMonto;
 
   const gasto = {
-    fecha: normalizarFecha(g.fecha),
+    fecha: normalizarFecha(g.fecha || momento),
     monto: monto,
     comercio: comercio,
-    tarjeta: String(g.tarjeta || '').trim(),
+    tarjeta: tarjeta,
     categoria: String(g.categoria || '').trim() || categorizar(comercio, leerConfig().reglas),
     origen: origen,
-    id: String(g.id || Utilities.getUuid()),
+    // Con "momento" el id sale del contenido: reenviar el mismo gasto lo actualiza en vez de duplicarlo.
+    id: String(g.id || (momento ? 'sc-' + resumenHex(momento + '|' + monto + '|' + comercio + '|' + tarjeta) : Utilities.getUuid())),
   };
   const fila = HOJAS.Gastos.map(function (c) { return gasto[c]; });
 
@@ -147,6 +170,19 @@ function guardarGasto(g) {
   if (n) sh.getRange(n, 1, 1, fila.length).setValues([fila]);
   else sh.appendRow(fila);
   return gasto;
+}
+
+/** Una línea JSON por gasto; las líneas vacías o ilegibles se ignoran. */
+function guardarLote(lineas) {
+  const guardados = [];
+  String(lineas || '').split(/\r?\n/).forEach(function (linea) {
+    linea = linea.trim();
+    if (!linea) return;
+    let g;
+    try { g = JSON.parse(linea); } catch (err) { return; }
+    try { guardados.push(guardarGasto(g)); } catch (err) { /* monto inválido: se descarta esa línea */ }
+  });
+  return guardados;
 }
 
 function borrarGasto(id) {
@@ -201,7 +237,50 @@ function guardarConfig(cfg) {
   });
 }
 
+// ---------- Respaldo semanal ----------
+
+const CARPETA_RESPALDOS = 'Gastos - respaldos';
+const RESPALDOS_A_GUARDAR = 8;
+
+/** Copia la planilla a la carpeta de respaldos y manda a la papelera las copias más viejas. */
+function respaldoSemanal() {
+  const ss = SpreadsheetApp.getActive();
+  const carpetas = DriveApp.getFoldersByName(CARPETA_RESPALDOS);
+  const carpeta = carpetas.hasNext() ? carpetas.next() : DriveApp.createFolder(CARPETA_RESPALDOS);
+  DriveApp.getFileById(ss.getId())
+    .makeCopy(ss.getName() + ' - respaldo ' + Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), carpeta);
+
+  const copias = [];
+  const archivos = carpeta.getFiles();
+  while (archivos.hasNext()) copias.push(archivos.next());
+  copias.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  copias.slice(RESPALDOS_A_GUARDAR).forEach(function (f) { f.setTrashed(true); });
+}
+
+/** Ejecutar una vez: programa el respaldo los domingos a las 3 AM y hace el primero. */
+function instalarRespaldo() {
+  ScriptApp.getProjectTriggers()
+    .filter(function (t) { return t.getHandlerFunction() === 'respaldoSemanal'; })
+    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('respaldoSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).inTimezone(TZ).create();
+  respaldoSemanal();
+}
+
 // ---------- Utilidades ----------
+
+function primero() {
+  for (let i = 0; i < arguments.length; i++) {
+    if (arguments[i] !== undefined && arguments[i] !== null && arguments[i] !== '') return arguments[i];
+  }
+  return undefined;
+}
+
+function resumenHex(texto) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, texto, Utilities.Charset.UTF_8)
+    .map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); })
+    .join('')
+    .slice(0, 20);
+}
 
 /** "Gs 150.000", "₲150,000", "PYG 150.000,00", 150000 -> 150000 (guaraníes no tienen decimales). */
 function parsearMonto(v) {
