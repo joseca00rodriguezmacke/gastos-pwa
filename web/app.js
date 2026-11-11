@@ -32,7 +32,7 @@ const ICONOS = {
   combustible: '⛽', nafta: '⛽', transporte: '🚕', auto: '🚗', servicios: '💡', salud: '💊', farmacia: '💊',
   suscripciones: '📺', hogar: '🏠', casa: '🏠', ocio: '🎉', entretenimiento: '🎬', ropa: '👕', educacion: '📚',
   viajes: '✈️', regalos: '🎁', mascotas: '🐾', deporte: '🏋️', gimnasio: '🏋️', tecnologia: '💻', belleza: '💅',
-  impuestos: '🧾', bancos: '🏦', hijos: '🧸', otros: '📦',
+  impuestos: '🧾', bancos: '🏦', hijos: '🧸', transferencias: '💸', otros: '📦',
 };
 const SIN_CATEGORIA_TOP = 5; // en la dona: 5 categorías + "Otras"
 
@@ -148,15 +148,25 @@ function nombreBonito(s) {
   if (!s || s !== s.toUpperCase() || !/[A-ZÁÉÍÓÚÑ]{3}/.test(s)) return s;
   return s.toLowerCase().replace(/(^|[\s\-/.(])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
 }
+/** Igual que en el backend: la regla tiene que coincidir como palabra completa ("stock" ≠ "stockholm"). */
 function categorizar(comercio, reglas = state.config.reglas) {
   const c = normalizar(comercio);
   if (c) {
     for (const r of reglas) {
-      const p = normalizar(r.patron);
-      if (p && c.includes(p)) return r.categoria;
+      const p = normalizar(r.patron).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (p && new RegExp(`(^|[^a-z0-9])${p}($|[^a-z0-9])`).test(c)) return r.categoria;
     }
   }
   return CATEGORIA_DEFECTO;
+}
+
+const NOMBRES_FUENTE = { applepay: 'Apple Pay', sms: 'SMS', mail: 'Mail' };
+/** "applepay+sms · USD 9,99 (TC 7.300)" -> "Apple Pay + SMS · USD 9,99"; "manual" -> "" */
+function fuenteLegible(origen) {
+  if (!origen || origen === 'manual') return '';
+  const [fuentes, ...notas] = origen.split(' · ');
+  const nombres = fuentes.split('+').map((f) => NOMBRES_FUENTE[f] || f).join(' + ');
+  return [nombres, ...notas.map((n) => n.replace(/\s*\(TC [^)]*\)/, ''))].join(' · ');
 }
 function colorDe(categoria) {
   return state.config.categorias.find((c) => c.nombre === categoria)?.color || COLOR_DEFECTO;
@@ -798,7 +808,7 @@ function renderTopComercios(gastos) {
 function filaMovimiento(g, { dudosos, accion } = {}) {
   const color = colorDe(g.categoria);
   const meta = [g.categoria, g.tarjeta, g.fecha.slice(11, 16)];
-  if (g.origen && g.origen !== 'manual') meta.push(g.origen === 'applepay' ? 'Apple Pay' : g.origen);
+  meta.push(fuenteLegible(g.origen));
   return el('li', { class: 'mov' + (g.id === state.recienGuardado ? ' nuevo' : ''), onclick: accion ? null : () => abrirGasto(g) },
     el('span', { class: 'ico', style: fondoIcono(color) }, iconoDe(g.categoria)),
     el('div', { class: 'info' },
@@ -1125,7 +1135,7 @@ $('#formGasto').addEventListener('submit', async (ev) => {
   };
   const parecido = !g && gastoParecido(gasto);
   if (parecido && !confirm(`Ya hay un gasto de ${gs(parecido.monto)} en ${nombreBonito(parecido.comercio) || 'sin comercio'} a las ${parecido.fecha.slice(11, 16)}` +
-    `${parecido.origen === 'applepay' ? ' (entró por Apple Pay)' : ''}.\n\n¿Guardar este de todos modos?`)) return;
+    `${fuenteLegible(parecido.origen) ? ` (entró por ${fuenteLegible(parecido.origen)})` : ''}.\n\n¿Guardar este de todos modos?`)) return;
   if (gasto.tarjeta) localStorageSet('ultimaTarjeta', gasto.tarjeta);
   state.recienGuardado = gasto.id;
   setTimeout(() => { state.recienGuardado = ''; }, 1500);
