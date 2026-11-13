@@ -49,6 +49,11 @@
         <span class="alerta-txt"><b id="alertaDupTit"></b><small>Puede que un pago se haya registrado dos veces.</small></span>
         <span class="alerta-cta">Revisar</span>
       </button>
+      <button id="alertaRevisar" class="alerta" type="button" hidden>
+        <span class="alerta-ico">?</span>
+        <span class="alerta-txt"><b id="alertaRevisarTit"></b><small>Transferencias a destinatarios nuevos: no suman hasta que las confirmes.</small></span>
+        <span class="alerta-cta">Revisar</span>
+      </button>
       <button id="alertaSistema" class="alerta" type="button" hidden>
         <span class="alerta-ico">!</span>
         <span class="alerta-txt"><b id="alertaSistemaTit"></b><small id="alertaSistemaSub"></small></span>
@@ -71,6 +76,18 @@
         <div class="kpi"><span>Gastos</span><b id="kpiCant">—</b></div>
         <div class="kpi"><span>Ticket prom.</span><b id="kpiTicket">—</b></div>
       </div>
+
+      <article class="card" id="cardFlujo">
+        <div class="card-cab"><h2>Flujo del mes</h2><button class="link" data-ir="ingresos">Ver ingresos</button></div>
+        <div class="flujo">
+          <div class="flujo-fila"><span>Ingresos</span><b id="flujoIng" class="positivo">—</b></div>
+          <div class="flujo-barra"><i id="flujoBarIng" class="ing"></i></div>
+          <div class="flujo-fila"><span>Gastos</span><b id="flujoGas">—</b></div>
+          <div class="flujo-barra"><i id="flujoBarGas" class="gas"></i></div>
+          <div class="flujo-resultado"><span id="flujoResTxt">Resultado</span><b id="flujoRes">—</b></div>
+          <div class="flujo-desglose" id="flujoDesglose"></div>
+        </div>
+      </article>
 
       <article class="card">
         <div class="card-cab">
@@ -109,6 +126,23 @@
 
     <!-- MOVIMIENTOS -->
     <section id="vista-movimientos" class="vista" hidden>
+      <div class="segmento" role="tablist">
+        <button type="button" data-modo="gastos" class="activo">Gastos</button>
+        <button type="button" data-modo="ingresos">Ingresos</button>
+      </div>
+
+      <div id="ingresosVista" class="vista-interna" hidden>
+        <div class="resumen-mov"><span id="ingCant"></span><b id="ingTotal" class="positivo"></b></div>
+        <div id="ingDesglose" class="chips-estaticos"></div>
+        <button type="button" class="btn ancho" id="btnNuevoIngreso">+ Agregar ingreso</button>
+        <div id="listaIng"></div>
+        <div id="vacioIng" class="vacio" hidden>
+          <div class="vacio-icono">💼</div>
+          <p>No hay ingresos este mes.</p>
+        </div>
+      </div>
+
+      <div id="gastosVista" class="vista-interna">
       <div class="buscador">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
         <input id="buscar" type="search" placeholder="Buscar comercio, tarjeta…" autocomplete="off" enterkeyhint="search">
@@ -120,6 +154,7 @@
         <div class="vacio-icono">🧾</div>
         <p>No hay movimientos acá todavía.</p>
         <button class="btn primario" data-nuevo>Registrar un gasto</button>
+      </div>
       </div>
     </section>
 
@@ -171,6 +206,12 @@
         <p class="ayuda">Si el comercio contiene el texto (sin importar mayúsculas ni tildes), se asigna la categoría. Gana la primera que coincide.</p>
         <ul id="listaReglas" class="editable"></ul>
         <button id="btnAddRegla" class="btn ancho">+ Agregar regla</button>
+      </article>
+
+      <article class="card">
+        <h2>Reglas por destinatario</h2>
+        <p class="ayuda">Cómo se clasifican las transferencias que enviás. Se crean al revisar una transferencia nueva.</p>
+        <ul id="listaDestinatarios" class="dest-lista"></ul>
       </article>
 
       <div class="guardar-config" id="barraGuardar" hidden>
@@ -253,6 +294,39 @@
         <input id="fPres" inputmode="numeric" placeholder="Sin límite">
       </label>
       <button type="submit" class="btn primario ancho">Guardar</button>
+    </form>
+  </div>
+
+  <!-- Transferencias por revisar -->
+  <div id="hojaRevisar" class="hoja" hidden>
+    <div class="hoja-fondo" data-cerrar></div>
+    <div class="hoja-panel">
+      <div class="hoja-asa"></div>
+      <div class="hoja-cab">
+        <span></span>
+        <b>Por revisar</b>
+        <button type="button" class="link" data-cerrar>Listo</button>
+      </div>
+      <p class="ayuda">Elegí la categoría o marcá que no es gasto. Con "Recordar", las próximas transferencias a esa persona se clasifican solas.</p>
+      <div id="listaRevisar" class="revisar-lista"></div>
+    </div>
+  </div>
+
+  <!-- Ingreso -->
+  <div id="hojaIngreso" class="hoja" hidden>
+    <div class="hoja-fondo" data-cerrar></div>
+    <form id="formIngreso" class="hoja-panel chico" autocomplete="off">
+      <div class="hoja-asa"></div>
+      <div class="hoja-cab">
+        <button type="button" class="link" data-cerrar>Cancelar</button>
+        <b id="ingTitulo">Ingreso</b>
+        <button type="button" id="btnBorrarIng" class="link peligro" hidden>No es ingreso</button>
+      </div>
+      <label><span>Monto (Gs)</span><input id="iMonto" inputmode="numeric" required></label>
+      <label><span>De quién</span><input id="iPagador" placeholder="Cliente, empresa…"></label>
+      <div id="iCats" class="cat-chips ingreso-cats"></div>
+      <label><span>Fecha</span><input id="iFecha" type="datetime-local" required></label>
+      <button type="submit" class="btn primario ancho">Guardar ingreso</button>
     </form>
   </div>
 

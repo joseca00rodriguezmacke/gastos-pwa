@@ -32,8 +32,13 @@ const ICONOS = {
   combustible: '⛽', nafta: '⛽', transporte: '🚕', auto: '🚗', servicios: '💡', salud: '💊', farmacia: '💊',
   suscripciones: '📺', hogar: '🏠', casa: '🏠', ocio: '🎉', entretenimiento: '🎬', ropa: '👕', educacion: '📚',
   viajes: '✈️', regalos: '🎁', mascotas: '🐾', deporte: '🏋️', gimnasio: '🏋️', tecnologia: '💻', belleza: '💅',
-  impuestos: '🧾', bancos: '🏦', hijos: '🧸', transferencias: '💸', otros: '📦',
+  impuestos: '🧾', bancos: '🏦', hijos: '🧸', transferencias: '💸', inversiones: '📈',
+  'por revisar': '❓', sueldo: '💼', ventas: '🧾', otros: '📦',
 };
+const POR_REVISAR = 'Por revisar';
+const CATS_INGRESO = ['Sueldo', 'Ventas'];
+/** Lo que está "Por revisar" no suma a los gastos hasta que lo confirmes. */
+const contable = (g) => g.categoria !== POR_REVISAR;
 const SIN_CATEGORIA_TOP = 5; // en la dona: 5 categorías + "Otras"
 
 const $ = (sel) => document.querySelector(sel);
@@ -57,6 +62,8 @@ const state = {
   filtroCat: '',
   busqueda: '',
   recienGuardado: '',
+  ingresos: [],      // ingresos según el servidor (o caché)
+  modoMov: 'gastos', // Movimientos: "gastos" o "ingresos"
   discreto: false,   // modo discreto: oculta los montos
   estadoSis: null,   // último estado del sistema traído del servidor
 };
@@ -276,6 +283,8 @@ async function cargarDelServidor() {
   if (!r.ok) throw new Error(r.error || 'Error del servidor');
   state.todos = r.gastos;
   await store.set('gastos:todos', r.gastos);
+  state.ingresos = r.ingresos || [];
+  await store.set('ingresos:todos', state.ingresos);
   if (!hayConfigPendiente() && r.config?.categorias?.length) {
     state.config = r.config;
     await store.set('config', r.config);
@@ -330,6 +339,16 @@ function gastosTodos() {
   }
   return [...mapa.values()].sort((a, b) => b.fecha.localeCompare(a.fecha));
 }
+/** Ingresos: servidor + cambios pendientes de la cola. */
+function ingresosTodos() {
+  const mapa = new Map(state.ingresos.map((i) => [i.id, { ...i }]));
+  for (const { body } of state.cola) {
+    if (body.accion === 'ingreso') mapa.set(body.ingreso.id, { ...body.ingreso, pendiente: true });
+    else if (body.accion === 'borrarIngreso') mapa.delete(body.id);
+  }
+  return [...mapa.values()].sort((a, b) => b.fecha.localeCompare(a.fecha));
+}
+
 const delMes = (gastos, mes) => gastos.filter((g) => g.fecha.startsWith(mes));
 const suma = (gastos) => gastos.reduce((s, g) => s + g.monto, 0);
 
@@ -481,13 +500,19 @@ function sinCambios(vista, ...partes) {
 const firmaDatos = (gastos) => gastos.map((g) => g.id + g.monto + g.categoria + g.fecha + (g.pendiente ? 'p' : '') + g.comercio).join('|');
 
 function renderInicio() {
-  const todos = gastosTodos();
+  const conRevisar = gastosTodos();
+  const todos = conRevisar.filter(contable);
+  const ingresos = ingresosTodos();
   const mes = state.mes;
-  const dups = posiblesDuplicados(delMes(todos, mes));
+  const dups = posiblesDuplicados(delMes(conRevisar, mes));
   $('#alertaDup').hidden = !dups.length;
   $('#alertaDupTit').textContent = dups.length === 1 ? '1 posible gasto duplicado' : `${dups.length} posibles gastos duplicados`;
+  const revisar = conRevisar.length - todos.length;
+  $('#alertaRevisar').hidden = !revisar;
+  $('#alertaRevisarTit').textContent = revisar === 1 ? '1 transferencia por revisar' : `${revisar} transferencias por revisar`;
   renderAlertaSistema();
-  if (sinCambios('inicio', mes, firmaDatos(todos), state.config, state.discreto, $('#graficoRitmo').clientWidth, new Date().getDate())) return;
+  if (sinCambios('inicio', mes, firmaDatos(conRevisar), firmaDatos(ingresos), state.config, state.discreto, $('#graficoRitmo').clientWidth, new Date().getDate())) return;
+  renderFlujo(delMes(ingresos, mes), suma(delMes(todos, mes)));
   const previo = moverMes(mes, -1);
   const actuales = delMes(todos, mes);
   const anteriores = delMes(todos, previo);
@@ -562,6 +587,27 @@ function renderInicio() {
   const ul = $('#ultimos');
   ul.replaceChildren(...actuales.slice(0, 5).map(filaMovimiento));
   if (!actuales.length) ul.append(el('li', { class: 'vacio-grafico' }, 'Todavía no hay gastos este mes.'));
+}
+
+/** Flujo del mes: ingresos vs gastos y lo que quedó. */
+function renderFlujo(ingresos, gastado) {
+  const ing = suma(ingresos);
+  const resultado = ing - gastado;
+  const escala = Math.max(ing, gastado, 1);
+  $('#flujoIng').textContent = gs(ing);
+  $('#flujoGas').textContent = gs(gastado);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    $('#flujoBarIng').style.width = (ing / escala) * 100 + '%';
+    $('#flujoBarGas').style.width = (gastado / escala) * 100 + '%';
+  }));
+  $('#flujoResTxt').textContent = !ing ? 'Resultado' : resultado >= 0 ? `Ahorro (${Math.round((resultado / ing) * 100)}% de lo que entró)` : 'Gastaste más de lo que entró';
+  const res = $('#flujoRes');
+  res.textContent = (resultado < 0 ? '−' : '') + gs(Math.abs(resultado));
+  res.style.color = resultado >= 0 ? 'var(--ingreso)' : 'var(--critical)';
+  $('#flujoDesglose').replaceChildren(...CATS_INGRESO.map((c) => {
+    const t = suma(ingresos.filter((i) => i.categoria === c));
+    return el('span', { class: 'mini-chip' }, `${iconoDe(c)} ${c}`, el('b', {}, corto(t)));
+  }));
 }
 
 function graficoRitmo(cont, { actual, previo, dias, mes, previoNombre }) {
@@ -819,7 +865,9 @@ function filaMovimiento(g, { dudosos, accion } = {}) {
   return el('li', { class: 'mov' + (g.id === state.recienGuardado ? ' nuevo' : ''), onclick: accion ? null : () => abrirGasto(g) },
     el('span', { class: 'ico', style: fondoIcono(color) }, iconoDe(g.categoria)),
     el('div', { class: 'info' },
-      el('div', { class: 'com' }, nombreBonito(g.comercio) || 'Sin comercio', dudosos?.has(g.id) ? el('span', { class: 'tag-dup' }, '¿duplicado?') : null),
+      el('div', { class: 'com' }, nombreBonito(g.comercio) || 'Sin comercio',
+        dudosos?.has(g.id) ? el('span', { class: 'tag-dup' }, '¿duplicado?') : null,
+        g.categoria === POR_REVISAR ? el('span', { class: 'tag-dup' }, 'por revisar') : null),
       el('div', { class: 'meta' }, meta.filter(Boolean).join(' · ')),
     ),
     accion || el('div', { class: 'monto' }, gs(g.monto), g.pendiente ? el('small', {}, 'pendiente') : null),
@@ -845,6 +893,10 @@ $('#alertaDup').addEventListener('click', abrirDuplicados);
 // ---------- Movimientos ----------
 
 function renderMovimientos() {
+  for (const b of $$('.segmento button')) b.classList.toggle('activo', b.dataset.modo === state.modoMov);
+  $('#gastosVista').hidden = state.modoMov !== 'gastos';
+  $('#ingresosVista').hidden = state.modoMov !== 'ingresos';
+  if (state.modoMov === 'ingresos') return renderIngresos();
   const delMesActual = delMes(gastosTodos(), state.mes);
   const cats = totalesPorCategoria(delMesActual).map((c) => c.categoria);
   if (state.filtroCat && !cats.includes(state.filtroCat)) cats.unshift(state.filtroCat);
@@ -862,7 +914,7 @@ function renderMovimientos() {
     (!q || normalizar(`${g.comercio} ${g.tarjeta} ${g.categoria} ${g.origen}`).includes(q)));
 
   $('#movCant').textContent = `${lista.length} movimiento${lista.length === 1 ? '' : 's'}`;
-  $('#movTotal').textContent = gs(suma(lista));
+  $('#movTotal').textContent = gs(suma(lista.filter(contable)));
 
   const cont = $('#listaMov');
   cont.replaceChildren();
@@ -885,10 +937,148 @@ function renderMovimientos() {
   $('#vacioMov').hidden = lista.length > 0;
 }
 
+// ---------- Ingresos ----------
+
+function etiquetaDia(dia) {
+  const hoy = ahoraLocal().slice(0, 10);
+  const d = new Date(); d.setDate(d.getDate() - 1); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  if (dia === hoy) return 'Hoy';
+  if (dia === d.toISOString().slice(0, 10)) return 'Ayer';
+  const [a, m, dd] = dia.split('-').map(Number);
+  return new Date(a, m - 1, dd).toLocaleDateString('es-PY', { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+function renderIngresos() {
+  const lista = delMes(ingresosTodos(), state.mes);
+  $('#ingCant').textContent = `${lista.length} ingreso${lista.length === 1 ? '' : 's'}`;
+  $('#ingTotal').textContent = '+' + gs(suma(lista));
+  $('#ingDesglose').replaceChildren(...CATS_INGRESO.map((c) =>
+    el('span', { class: 'mini-chip' }, `${iconoDe(c)} ${c}`, el('b', {}, gs(suma(lista.filter((i) => i.categoria === c)))))));
+  const dias = new Map();
+  for (const i of lista) {
+    const d = i.fecha.slice(0, 10);
+    if (!dias.has(d)) dias.set(d, []);
+    dias.get(d).push(i);
+  }
+  $('#listaIng').replaceChildren(...[...dias].map(([dia, items]) => el('div', { class: 'grupo-dia' },
+    el('div', { class: 'cab-dia' }, el('span', {}, etiquetaDia(dia)), el('span', { class: 'positivo' }, '+' + gs(suma(items)))),
+    el('ul', { class: 'mov-lista' }, items.map((i) => el('li', { class: 'mov', onclick: () => abrirIngreso(i) },
+      el('span', { class: 'ico', style: 'background:var(--ingreso-soft)' }, iconoDe(i.categoria)),
+      el('div', { class: 'info' },
+        el('div', { class: 'com' }, nombreBonito(i.pagador) || 'Sin nombre'),
+        el('div', { class: 'meta' }, [i.categoria, i.banco, i.fecha.slice(11, 16)].filter(Boolean).join(' · ')),
+      ),
+      el('div', { class: 'monto ing' }, '+' + gs(i.monto), i.pendiente ? el('small', {}, 'pendiente') : null),
+    ))),
+  )));
+  $('#vacioIng').hidden = lista.length > 0;
+}
+
+const formIng = { editando: null, categoria: 'Ventas' };
+
+function abrirIngreso(i = null) {
+  formIng.editando = i;
+  formIng.categoria = i?.categoria || 'Ventas';
+  $('#ingTitulo').textContent = i ? 'Ingreso' : 'Nuevo ingreso';
+  $('#iMonto').value = i ? fmt.format(i.monto) : '';
+  $('#iPagador').value = i?.pagador || '';
+  $('#iFecha').value = i ? i.fecha.replace(' ', 'T') : (state.mes === mesActual() ? ahoraLocal() : state.mes + '-01T12:00');
+  $('#btnBorrarIng').hidden = !i;
+  pintarCatsIngreso();
+  abrirHoja($('#hojaIngreso'));
+}
+function pintarCatsIngreso() {
+  $('#iCats').replaceChildren(...CATS_INGRESO.map((c) => el('button', {
+    type: 'button', class: 'cat-chip' + (c === formIng.categoria ? ' activo' : ''),
+    onclick: () => { formIng.categoria = c; vibrar(5); pintarCatsIngreso(); },
+  }, el('span', { class: 'e' }, iconoDe(c)), el('span', {}, c))));
+}
+$('#iMonto').addEventListener('input', (e) => { const n = soloDigitos(e.target.value); e.target.value = n ? fmt.format(n) : ''; });
+$('#formIngreso').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const monto = soloDigitos($('#iMonto').value);
+  if (!monto) return toast('Ingresá un monto');
+  const i = formIng.editando;
+  const ingreso = {
+    id: i?.id || uuid(),
+    fecha: ($('#iFecha').value || ahoraLocal()).replace('T', ' ').slice(0, 16),
+    monto,
+    pagador: $('#iPagador').value.trim(),
+    categoria: formIng.categoria,
+    banco: i?.banco || '',
+    origen: i?.origen || 'manual',
+  };
+  cerrarHoja($('#hojaIngreso'));
+  vibrar(12);
+  await encolar({ accion: 'ingreso', ingreso });
+  toast(`Ingreso ${i ? 'actualizado' : 'guardado'}: ${gs(monto)} · ${ingreso.categoria}`);
+});
+$('#btnBorrarIng').addEventListener('click', async () => {
+  const i = formIng.editando;
+  if (!i || !confirm(`¿Quitar el ingreso de ${gs(i.monto)} de ${i.pagador || 'sin nombre'}?`)) return;
+  cerrarHoja($('#hojaIngreso'));
+  await encolar({ accion: 'borrarIngreso', id: i.id });
+  toast('Ingreso quitado');
+});
+$('#btnNuevoIngreso').addEventListener('click', () => abrirIngreso());
+for (const b of $$('.segmento button')) {
+  b.addEventListener('click', () => { state.modoMov = b.dataset.modo; vibrar(5); renderMovimientos(); animarEntrada('entra'); });
+}
+
+// ---------- Por revisar ----------
+
+const nombreDestinatario = (g) => nombreBonito(g.comercio).replace(/^Transferencia a /i, '');
+
+function abrirRevisar() {
+  const pendientes = gastosTodos().filter((g) => g.categoria === POR_REVISAR);
+  if (!pendientes.length) {
+    if (!$('#hojaRevisar').hidden) cerrarHoja($('#hojaRevisar'));
+    toast('No quedan transferencias por revisar ✓');
+    return;
+  }
+  const cats = state.config.categorias.map((c) => c.nombre);
+  $('#listaRevisar').replaceChildren(...pendientes.map((g) => {
+    const nombre = nombreDestinatario(g);
+    let elegida = '';
+    const chips = el('div', { class: 'cat-chips' }, cats.map((c) => el('button', {
+      type: 'button', class: 'cat-chip',
+      onclick: (e) => { elegida = c; vibrar(5); for (const x of chips.children) x.classList.toggle('activo', x === e.currentTarget); btnGuardar.disabled = false; },
+    }, el('span', { class: 'e' }, iconoDe(c)), el('span', {}, c))));
+    const recordar = el('input', { type: 'checkbox', checked: true });
+    const btnGuardar = el('button', { type: 'button', class: 'btn primario', disabled: true, onclick: () => resolverRevisar(g, elegida, recordar.checked) }, 'Guardar');
+    return el('div', { class: 'rev-item' },
+      el('div', { class: 'rev-cab' }, el('b', {}, nombre), el('span', { class: 'm' }, gs(g.monto)),
+        el('small', {}, [etiquetaDia(g.fecha.slice(0, 10)), g.fecha.slice(11, 16), g.tarjeta].filter(Boolean).join(' · '))),
+      chips,
+      el('label', { class: 'check' }, recordar, el('span', {}, `Recordar para ${nombre.split(' ').slice(0, 2).join(' ')}`)),
+      el('div', { class: 'rev-acciones' },
+        el('button', { type: 'button', class: 'btn', onclick: () => resolverRevisar(g, '', recordar.checked) }, 'No es gasto'),
+        btnGuardar),
+    );
+  }));
+  if ($('#hojaRevisar').hidden) abrirHoja($('#hojaRevisar'));
+}
+
+/** categoria vacía = no es gasto. Con "recordar", crea la regla y resuelve igual las otras del mismo destinatario. */
+async function resolverRevisar(g, categoria, recordar) {
+  const nombre = nombreDestinatario(g);
+  const mismos = recordar ? gastosTodos().filter((x) => x.categoria === POR_REVISAR && nombreDestinatario(x) === nombre) : [g];
+  vibrar(10);
+  if (recordar) await encolar({ accion: 'destinatario', regla: { nombre, accion: categoria ? 'gasto' : 'ignorar', categoria } });
+  for (const x of mismos) {
+    const { pendiente, ...gasto } = x;
+    if (categoria) await encolar({ accion: 'guardar', gasto: { ...gasto, categoria } });
+    else await encolar({ accion: 'borrar', id: x.id });
+  }
+  toast(categoria ? `${nombre} → ${categoria}${recordar ? ' (recordado)' : ''}` : `${nombre}: no es gasto${recordar ? ' (recordado)' : ''}`);
+  abrirRevisar();
+}
+$('#alertaRevisar').addEventListener('click', abrirRevisar);
+
 // ---------- Presupuesto ----------
 
 function renderPresupuesto() {
-  const actuales = delMes(gastosTodos(), state.mes);
+  const actuales = delMes(gastosTodos(), state.mes).filter(contable);
   if (sinCambios('presupuesto', state.mes, firmaDatos(actuales), state.config, state.discreto)) return;
   const total = suma(actuales);
   const pres = presupuestoTotal();
@@ -969,8 +1159,32 @@ $('#formPres').addEventListener('submit', async (ev) => {
 
 // ---------- Ajustes ----------
 
+function renderDestinatarios() {
+  const reglas = state.config.destinatarios || [];
+  const ul = $('#listaDestinatarios');
+  if (!reglas.length) { ul.replaceChildren(el('li', { class: 'vacio-grafico', style: 'display:block' }, 'Todavía no hay reglas.')); return; }
+  ul.replaceChildren(...reglas.map((r) => {
+    const ignorar = r.accion === 'ignorar';
+    const det = ignorar ? 'No es gasto'
+      : [r.categoria || 'Transferencias', r.etiqueta ? `"${r.etiqueta}"` : '', r.limite ? `más de ${gs(r.limite)} no es gasto` : ''].filter(Boolean).join(' · ');
+    return el('li', {},
+      el('span', { class: 'ico', style: ignorar ? 'background:var(--card-2)' : fondoIcono(colorDe(r.categoria)) }, ignorar ? '🚫' : iconoDe(r.categoria)),
+      el('div', {}, el('div', { class: 'nom' }, r.nombre), el('div', { class: 'det' }, det)),
+      el('button', { class: 'quitar', type: 'button', 'aria-label': 'Quitar regla', onclick: async () => {
+        if (!confirm(`¿Quitar la regla de ${r.nombre}? Las próximas transferencias a esa persona van a ir a "Por revisar".`)) return;
+        const destinatarios = reglas.filter((x) => x !== r);
+        state.config = { ...state.config, destinatarios };
+        await store.set('config', state.config);
+        await encolar({ accion: 'config', config: { destinatarios } });
+        renderDestinatarios();
+      } }, '×'),
+    );
+  }));
+}
+
 function renderAjustes() {
   renderEstadoSistema();
+  renderDestinatarios();
   if (!state.borrador) state.borrador = structuredClone(state.config);
   const b = state.borrador;
   if (document.activeElement?.id !== 'cfgUrl') $('#cfgUrl').value = state.conexion.url;
@@ -1360,7 +1574,11 @@ $('#mesNext').onclick = () => cambiarMes(1);
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-nuevo]')) { vibrar(8); abrirGasto(); }
   const ir = e.target.closest('[data-ir]');
-  if (ir) { if (ir.dataset.ir === 'movimientos') state.filtroCat = ''; cambiarVista(ir.dataset.ir); }
+  if (ir) {
+    if (ir.dataset.ir === 'ingresos') { state.modoMov = 'ingresos'; cambiarVista('movimientos'); renderMovimientos(); return; }
+    if (ir.dataset.ir === 'movimientos') { state.filtroCat = ''; state.modoMov = 'gastos'; }
+    cambiarVista(ir.dataset.ir);
+  }
 });
 $('#estado').onclick = () => {
   if (!conectado()) return cambiarVista('ajustes');
@@ -1453,6 +1671,7 @@ window.addEventListener('scroll', ocultarTip, { passive: true });
 state.conexion = (await store.get('conexion')) || state.conexion;
 state.config = (await store.get('config')) || state.config;
 state.todos = (await store.get('gastos:todos')) || [];
+state.ingresos = (await store.get('ingresos:todos')) || [];
 state.cola = await store.cola();
 state.discreto = localStorageGet('discreto') === '1';
 aplicarDiscreto();

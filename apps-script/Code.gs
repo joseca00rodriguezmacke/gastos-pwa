@@ -29,7 +29,12 @@ const HOJAS = {
   Presupuestos: ['categoria', 'monto'],
   Registro: ['fecha', 'fuente', 'aviso', 'resultado', 'detalle'],
   Ajustes: ['clave', 'valor'],
+  Ingresos: ['fecha', 'monto', 'pagador', 'categoria', 'banco', 'origen', 'id'],
+  // accion: "gasto" o "ignorar"; limite: si el monto lo supera, no es gasto; etiqueta: nombre a mostrar
+  Destinatarios: ['nombre', 'accion', 'categoria', 'etiqueta', 'limite'],
 };
+
+const POR_REVISAR = 'Por revisar';
 
 const CATEGORIAS_INICIALES = [
   ['Supermercado', '#16a34a'],
@@ -96,7 +101,7 @@ function doGet(e) {
     const p = (e && e.parameter) || {};
     autorizar(p.token);
     if (p.estado) return { ok: true, estado: estadoSistema() };
-    return { ok: true, gastos: listarGastos(p.mes || ''), config: leerConfig() };
+    return { ok: true, gastos: listarGastos(p.mes || ''), ingresos: listarIngresos(p.mes || ''), config: leerConfig() };
   });
 }
 
@@ -134,6 +139,16 @@ function doPost(e) {
       }
       if (accion === 'borrar') {
         return { ok: true, borrado: borrarGasto(body.id) };
+      }
+      if (accion === 'ingreso') {
+        return { ok: true, ingreso: guardarIngreso(body.ingreso || {}) };
+      }
+      if (accion === 'borrarIngreso') {
+        return { ok: true, borrado: borrarFila('Ingresos', String(body.id || '')) };
+      }
+      if (accion === 'destinatario') {
+        guardarDestinatario(body.regla || {});
+        return { ok: true, config: leerConfig() };
       }
       if (accion === 'config') {
         guardarConfig(body.config || {});
@@ -329,11 +344,12 @@ function leerConfig() {
     presupuestos: leerObjetos('Presupuestos')
       .filter(function (p) { return p.categoria; })
       .map(function (p) { return { categoria: p.categoria, monto: Number(p.monto) || 0 }; }),
+    destinatarios: leerDestinatarios(),
   };
 }
 
 function guardarConfig(cfg) {
-  ['categorias', 'reglas', 'presupuestos'].forEach(function (clave) {
+  ['categorias', 'reglas', 'presupuestos', 'destinatarios'].forEach(function (clave) {
     if (!Array.isArray(cfg[clave])) return;
     const nombreHoja = clave.charAt(0).toUpperCase() + clave.slice(1);
     const cols = HOJAS[nombreHoja];
@@ -364,6 +380,10 @@ function procesarAviso(av) {
       gasto: g,
       mensaje: 'Gs ' + formatearGs(g.monto) + ' · ' + (g.comercio || 'sin comercio') + ' → ' + g.categoria + (g.fusionado ? ' (ya estaba, completado)' : ''),
     };
+  } else if (av.tipo === 'ingreso') {
+    av.ingreso.id = av.id;
+    const i = guardarIngreso(av.ingreso);
+    r = { resultado: 'ingreso ' + i.categoria, mensaje: 'Ingreso Gs ' + formatearGs(i.monto) + ' · ' + i.pagador + ' → ' + i.categoria };
   } else if (av.tipo === 'reverso') {
     const borrado = aplicarReverso(av.gasto);
     r = { resultado: borrado ? 'reverso aplicado' : 'reverso sin pago original', mensaje: borrado ? 'Reverso: se quitó ' + borrado : 'Reverso recibido (no se encontró el pago)' };
@@ -428,6 +448,14 @@ function parsearCorreo(remitente, asunto, texto, idMensaje) {
         banco: 'Familiar',
       });
     }
+    if (/TRANSFERENCIA DE OTRAS ENTIDADES RECIBIDA/i.test(texto)) {
+      return ingresoRecibido(base, 'famr-' + (campo(texto, 'Nro\\. de Operaci[oó]n') || idMensaje), {
+        monto: campo(texto, 'Moneda y Monto') || campo(texto, 'Monto'),
+        pagador: campo(texto, 'Cliente Pagador'),
+        fecha: campo(texto, 'Fecha y hora de Operaci[oó]n'),
+        banco: 'Familiar',
+      });
+    }
     if (a.indexOf('pago de servicios') !== -1) {
       const servicio = campo(texto, 'Servicio');
       const categoria = categorizar(servicio, leerConfig().reglas);
@@ -454,25 +482,194 @@ function parsearCorreo(remitente, asunto, texto, idMensaje) {
       banco: 'GNB',
     });
   }
-  return null; // transferencias recibidas, facturas, publicidad: no son gastos
+  if (de.indexOf('bancognb.com.py') !== -1 && /Transferencia Interbancaria Recibida/i.test(texto)) {
+    return ingresoRecibido(base, 'gnbr-' + (campo(texto, 'N° Comprobante') || idMensaje), {
+      monto: campo(texto, 'Importe'),
+      pagador: campo(texto, 'Enviado por'),
+      fecha: campo(texto, 'Fecha y hora'),
+      banco: 'GNB',
+    });
+  }
+  if (de.indexOf('bancognb.com.py') !== -1 && /TRANSFERENCIA RECIBIDA DE CTA DE TERCEROS/i.test(texto)) {
+    return ingresoRecibido(base, 'gnbr-' + (campo(texto, 'Nro\\. de Comprobante') || idMensaje), {
+      monto: campo(texto, 'Importe'),
+      pagador: campo(texto, 'Nombre del Ordenante'),
+      fecha: campo(texto, 'Fecha y Hora'),
+      banco: 'GNB',
+    });
+  }
+  return null; // facturas, publicidad: no son gastos ni ingresos
 }
 
 function transferenciaEnviada(base, id, d) {
   const titular = String(ajustes().titular || '').trim();
   if (!titular) return Object.assign(base, { id: id, tipo: 'ignorar', motivo: 'falta el titular en la hoja Ajustes' });
   if (esTitular(d.beneficiario, titular)) return Object.assign(base, { id: id, tipo: 'ignorar', motivo: 'transferencia a cuenta propia' });
+  const decision = decidirDestinatario(d.beneficiario, parsearMonto(d.monto));
+  if (decision.ignorar) return Object.assign(base, { id: id, tipo: 'ignorar', motivo: decision.motivo });
   return Object.assign(base, {
     id: id,
     tipo: 'gasto',
     gasto: {
       monto: d.monto,
-      comercio: 'Transferencia a ' + titulo(d.beneficiario),
+      comercio: decision.etiqueta,
       tarjeta: d.banco,
-      categoria: 'Transferencias',
+      categoria: decision.categoria,
       fecha: fechaDeTexto(d.fecha),
       origen: 'mail',
     },
   });
+}
+
+// ---------- Reglas por destinatario ----------
+
+function leerDestinatarios() {
+  if (!SpreadsheetApp.getActive().getSheetByName('Destinatarios')) return [];
+  return leerObjetos('Destinatarios')
+    .filter(function (r) { return String(r.nombre).trim(); })
+    .map(function (r) {
+      return {
+        nombre: String(r.nombre).trim(),
+        accion: String(r.accion || 'gasto').trim().toLowerCase() === 'ignorar' ? 'ignorar' : 'gasto',
+        categoria: String(r.categoria || '').trim(),
+        etiqueta: String(r.etiqueta || '').trim(),
+        limite: Number(r.limite) || 0,
+      };
+    });
+}
+
+/** Todas las palabras de la regla tienen que estar en el nombre: "Liana Martinez" ~ "LIANA MONSERRAT MARTINEZ RECALDE". */
+function coincideNombre(nombre, regla) {
+  const palabras = function (s) { return normalizar(s).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(function (w) { return w.length > 1; }); };
+  const n = palabras(nombre);
+  const r = palabras(regla);
+  return r.length > 0 && r.every(function (w) { return n.indexOf(w) !== -1; });
+}
+
+function reglaDestinatario(nombre) {
+  const reglas = leerDestinatarios();
+  for (let i = 0; i < reglas.length; i++) if (coincideNombre(nombre, reglas[i].nombre)) return reglas[i];
+  return null;
+}
+
+/** Qué hacer con una transferencia enviada a "nombre": ignorarla, o con qué categoría y etiqueta guardarla. */
+function decidirDestinatario(nombre, monto) {
+  const etiquetaBase = 'Transferencia a ' + titulo(nombre);
+  const r = reglaDestinatario(nombre);
+  if (!r) return { categoria: POR_REVISAR, etiqueta: etiquetaBase };
+  if (r.accion === 'ignorar') return { ignorar: true, motivo: 'regla: ' + r.nombre + ' no es gasto' };
+  if (r.limite && monto > r.limite) return { ignorar: true, motivo: 'regla: ' + r.nombre + ' por más de ' + formatearGs(r.limite) + ' no es gasto' };
+  return { categoria: r.categoria || 'Transferencias', etiqueta: r.etiqueta || etiquetaBase };
+}
+
+/** Agrega o reemplaza la regla de un destinatario (desde la app, al revisar). */
+function guardarDestinatario(r) {
+  const nombre = String(r.nombre || '').trim();
+  if (!nombre) throw new Error('Falta el nombre del destinatario');
+  asegurarHojasLecturas();
+  const reglas = leerDestinatarios().filter(function (x) { return normalizar(x.nombre) !== normalizar(nombre); });
+  reglas.unshift({ nombre: nombre, accion: r.accion === 'ignorar' ? 'ignorar' : 'gasto', categoria: r.categoria || '', etiqueta: r.etiqueta || '', limite: Number(r.limite) || 0 });
+  guardarConfig({ destinatarios: reglas });
+}
+
+/** Una vez: aplica las reglas de destinatario a las transferencias ya registradas por mail. */
+function aplicarReglasDestinatarios() {
+  const sh = hoja('Gastos');
+  const datos = sh.getDataRange().getValues();
+  const c = {};
+  HOJAS.Gastos.forEach(function (k, i) { c[k] = i; });
+  let cambios = 0;
+  for (let i = datos.length - 1; i >= 1; i--) {
+    const f = datos[i];
+    const comercio = String(f[c.comercio]);
+    if (fuenteDe(f[c.origen]) !== 'mail' || !/^Transferencia a /i.test(comercio) || String(f[c.categoria]) !== 'Transferencias') continue;
+    const d = decidirDestinatario(comercio.replace(/^Transferencia a /i, ''), Number(f[c.monto]));
+    if (d.ignorar) { sh.deleteRow(i + 1); cambios++; continue; }
+    f[c.categoria] = d.categoria;
+    f[c.comercio] = d.etiqueta;
+    sh.getRange(i + 1, 1, 1, HOJAS.Gastos.length).setValues([f]);
+    cambios++;
+  }
+  return cambios;
+}
+
+// ---------- Ingresos ----------
+
+/** Plata recibida de terceros: SERCON = Sueldo, el resto = Ventas. Lo de cuentas propias se ignora. */
+function ingresoRecibido(base, id, d) {
+  const titular = String(ajustes().titular || '').trim();
+  if (!titular) return Object.assign(base, { id: id, tipo: 'ignorar', motivo: 'falta el titular en la hoja Ajustes' });
+  if (esTitular(d.pagador, titular)) return Object.assign(base, { id: id, tipo: 'ignorar', motivo: 'transferencia desde cuenta propia' });
+  const r = reglaDestinatario(d.pagador);
+  if (r && r.accion === 'ignorar') return Object.assign(base, { id: id, tipo: 'ignorar', motivo: 'regla: ' + r.nombre + ' se ignora' });
+  const patronSueldo = String(ajustes().empleador || 'SERCON');
+  return Object.assign(base, {
+    id: id,
+    tipo: 'ingreso',
+    ingreso: {
+      fecha: fechaDeTexto(d.fecha),
+      monto: parsearMonto(d.monto),
+      pagador: titulo(d.pagador),
+      categoria: coincideNombre(d.pagador, patronSueldo) ? 'Sueldo' : 'Ventas',
+      banco: d.banco,
+      origen: 'mail',
+    },
+  });
+}
+
+function guardarIngreso(i) {
+  asegurarHojasLecturas();
+  const ingreso = {
+    fecha: normalizarFecha(i.fecha),
+    monto: parsearMonto(i.monto),
+    pagador: String(i.pagador || '').trim(),
+    categoria: String(i.categoria || 'Ventas').trim(),
+    banco: String(i.banco || '').trim(),
+    origen: String(i.origen || 'manual').trim(),
+    id: String(i.id || Utilities.getUuid()),
+  };
+  if (!ingreso.monto) throw new Error('Monto inválido');
+  const sh = hoja('Ingresos');
+  const n = buscarFilaPorIdEn(sh, 'Ingresos', ingreso.id);
+  const fila = HOJAS.Ingresos.map(function (k) { return ingreso[k]; });
+  if (n) sh.getRange(n, 1, 1, fila.length).setValues([fila]);
+  else sh.appendRow(fila);
+  return ingreso;
+}
+
+function listarIngresos(mes) {
+  if (!SpreadsheetApp.getActive().getSheetByName('Ingresos')) return [];
+  return leerObjetos('Ingresos')
+    .map(function (g) { g.fecha = textoFecha(g.fecha); g.monto = Number(g.monto) || 0; g.id = String(g.id); return g; })
+    .filter(function (g) { return g.id && g.fecha.indexOf(mes) === 0; })
+    .sort(function (a, b) { return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0; });
+}
+
+function buscarFilaPorIdEn(sh, nombre, id) {
+  const col = HOJAS[nombre].indexOf('id');
+  const datos = sh.getDataRange().getValues();
+  for (let i = 1; i < datos.length; i++) if (String(datos[i][col]) === id) return i + 1;
+  return 0;
+}
+
+function borrarFila(nombre, id) {
+  if (!id || !SpreadsheetApp.getActive().getSheetByName(nombre)) return false;
+  const sh = hoja(nombre);
+  const n = buscarFilaPorIdEn(sh, nombre, id);
+  if (n) sh.deleteRow(n);
+  return !!n;
+}
+
+/** Ejecutar una vez: hojas de ingresos y destinatarios, aplica las reglas y lee los mails desde el 1 del mes. */
+function instalarIngresos() {
+  asegurarHojasLecturas();
+  const cambios = aplicarReglasDestinatarios();
+  const inicioMes = new Date();
+  inicioMes.setDate(1);
+  inicioMes.setHours(0, 0, 0, 0);
+  PropertiesService.getScriptProperties().setProperty('CORREOS_DESDE', String(Math.floor(inicioMes.getTime() / 1000) + 600));
+  procesarCorreos();
+  Logger.log('Transferencias reclasificadas: ' + cambios + ' · ingresos: ' + listarIngresos('').length);
 }
 
 /** Borra el pago que revierte (mismo monto ±3%, comercio parecido, hasta 3 días antes). */
@@ -505,6 +702,9 @@ function procesarCorreos() {
     props.setProperty('CORREOS_ULTIMA_CORRIDA', normalizarFecha(''));
     const desde = Number(props.getProperty('CORREOS_DESDE')) || Math.floor(Date.now() / 1000) - 3600;
     const consulta = 'from:(' + REMITENTES_BANCO.join(' OR ') + ') after:' + (desde - 600);
+    CACHE_REGISTRO = new Set(filasRegistro().slice(1)
+      .filter(function (f) { return !/^error/.test(String(f[3])); })
+      .map(function (f) { return String(f[2]); }));
     let ultimo = desde;
     GmailApp.search(consulta, 0, 100).forEach(function (hilo) {
       hilo.getMessages().forEach(function (msg) {
@@ -520,6 +720,7 @@ function procesarCorreos() {
     });
     props.setProperty('CORREOS_DESDE', String(ultimo));
   } finally {
+    CACHE_REGISTRO = null;
     lock.releaseLock();
   }
 }
@@ -542,9 +743,14 @@ function instalarLecturas() {
   procesarCorreos();
 }
 
+const CATEGORIAS_EXTRA = [
+  ['Transferencias', '#0d9488'], ['Auto', '#0e7490'], ['Inversiones', '#4d7c0f'],
+  ['Tecnología', '#7c3aed'], ['Educación', '#b45309'],
+];
+
 function asegurarHojasLecturas() {
   const ss = SpreadsheetApp.getActive();
-  ['Registro', 'Ajustes'].forEach(function (nombre) {
+  ['Registro', 'Ajustes', 'Ingresos', 'Destinatarios'].forEach(function (nombre) {
     const sh = ss.getSheetByName(nombre) || ss.insertSheet(nombre);
     if (sh.getLastRow() === 0) sh.appendRow(HOJAS[nombre]);
   });
@@ -556,8 +762,10 @@ function asegurarHojasLecturas() {
     aj.appendRow([mon, '']);
     aj.getRange(aj.getLastRow(), 2).setFormula('=GOOGLEFINANCE("CURRENCY:' + mon + 'PYG")');
   });
-  const cats = leerConfig().categorias.map(function (x) { return x.nombre; });
-  if (cats.indexOf('Transferencias') === -1) ss.getSheetByName('Categorias').appendRow(['Transferencias', '#0d9488']);
+  const cats = leerObjetos('Categorias').map(function (x) { return String(x.nombre); });
+  CATEGORIAS_EXTRA.forEach(function (c) {
+    if (cats.indexOf(c[0]) === -1) ss.getSheetByName('Categorias').appendRow(c);
+  });
 }
 
 function ajustes() {
@@ -580,6 +788,7 @@ function registrar(fuente, aviso, resultado, detalle) {
   const sh = SpreadsheetApp.getActive().getSheetByName('Registro');
   if (!sh) return;
   sh.appendRow([normalizarFecha(''), fuente, aviso, resultado, String(detalle || '').slice(0, 500)]);
+  if (CACHE_REGISTRO && !/^error/.test(resultado)) CACHE_REGISTRO.add(aviso);
   if (sh.getLastRow() > MAX_REGISTRO + 200) sh.deleteRows(2, 200);
 }
 
@@ -588,7 +797,11 @@ function filasRegistro() {
   return sh ? sh.getDataRange().getValues() : [];
 }
 
+// Durante procesarCorreos se cachean los avisos ya registrados: evita releer la hoja por cada mail.
+let CACHE_REGISTRO = null;
+
 function yaRegistrado(aviso) {
+  if (CACHE_REGISTRO) return CACHE_REGISTRO.has(aviso);
   return filasRegistro().some(function (f) { return String(f[2]) === aviso && !/^error/.test(String(f[3])); });
 }
 
@@ -632,10 +845,11 @@ function campo(texto, etiqueta) {
   return m ? m[1].trim() : '';
 }
 
-/** "10/11/2026 09:25:41" -> "2026-11-10 09:25"; vacío -> ahora. */
+/** "10/11/2026 09:25:41" o "12/11/26 09:25" -> "2026-11-10 09:25"; vacío -> ahora. */
 function fechaDeTexto(s) {
-  const m = String(s || '').match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2})/);
-  return m ? m[3] + '-' + m[2] + '-' + m[1] + ' ' + m[4] : normalizarFecha('');
+  const m = String(s || '').match(/(\d{2})\/(\d{2})\/(\d{2}|\d{4})\s+(\d{2}:\d{2})/);
+  if (!m) return normalizarFecha('');
+  return (m[3].length === 2 ? '20' + m[3] : m[3]) + '-' + m[2] + '-' + m[1] + ' ' + m[4];
 }
 
 function titulo(s) {
