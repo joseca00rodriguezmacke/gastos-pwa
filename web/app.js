@@ -39,7 +39,8 @@ const SIN_CATEGORIA_TOP = 5; // en la dona: 5 categorías + "Otras"
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 const fmt = new Intl.NumberFormat('es-PY', { maximumFractionDigits: 0 });
-const gs = (n) => 'Gs ' + fmt.format(Math.round(n || 0));
+const OCULTO = '•••••';
+const gs = (n) => 'Gs ' + (state.discreto ? OCULTO : fmt.format(Math.round(n || 0)));
 const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 const state = {
@@ -56,6 +57,8 @@ const state = {
   filtroCat: '',
   busqueda: '',
   recienGuardado: '',
+  discreto: false,   // modo discreto: oculta los montos
+  estadoSis: null,   // último estado del sistema traído del servidor
 };
 
 // ---------- Almacenamiento local (IndexedDB con respaldo en memoria) ----------
@@ -137,6 +140,7 @@ function normalizar(s) {
 }
 /** 1.250.000 -> "1,3 M"; 85.000 -> "85 mil" */
 function corto(n) {
+  if (state.discreto) return '•••';
   n = Math.round(n || 0);
   if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace('.', ',').replace(',0', '') + ' M';
   if (n >= 1e3) return Math.round(n / 1e3) + ' mil';
@@ -149,13 +153,13 @@ function nombreBonito(s) {
   return s.toLowerCase().replace(/(^|[\s\-/.(])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
 }
 /** Igual que en el backend: la regla tiene que coincidir como palabra completa ("stock" ≠ "stockholm"). */
+function coincidePatron(texto, patron) {
+  const p = normalizar(patron).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return !!p && new RegExp(`(^|[^a-z0-9])${p}($|[^a-z0-9])`).test(normalizar(texto));
+}
 function categorizar(comercio, reglas = state.config.reglas) {
-  const c = normalizar(comercio);
-  if (c) {
-    for (const r of reglas) {
-      const p = normalizar(r.patron).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (p && new RegExp(`(^|[^a-z0-9])${p}($|[^a-z0-9])`).test(c)) return r.categoria;
-    }
+  if (comercio) {
+    for (const r of reglas) if (coincidePatron(comercio, r.patron)) return r.categoria;
   }
   return CATEGORIA_DEFECTO;
 }
@@ -454,6 +458,7 @@ function cambiarVista(vista) {
   window.scrollTo({ top: 0 });
   render();
   animarEntrada('entra');
+  if (vista === 'ajustes') cargarEstado();
 }
 
 function animarEntrada(clase) {
@@ -481,7 +486,8 @@ function renderInicio() {
   const dups = posiblesDuplicados(delMes(todos, mes));
   $('#alertaDup').hidden = !dups.length;
   $('#alertaDupTit').textContent = dups.length === 1 ? '1 posible gasto duplicado' : `${dups.length} posibles gastos duplicados`;
-  if (sinCambios('inicio', mes, firmaDatos(todos), state.config, $('#graficoRitmo').clientWidth, new Date().getDate())) return;
+  renderAlertaSistema();
+  if (sinCambios('inicio', mes, firmaDatos(todos), state.config, state.discreto, $('#graficoRitmo').clientWidth, new Date().getDate())) return;
   const previo = moverMes(mes, -1);
   const actuales = delMes(todos, mes);
   const anteriores = delMes(todos, previo);
@@ -492,7 +498,8 @@ function renderInicio() {
 
   // Hero
   $('#heroEtiqueta').textContent = esActual ? 'Gastado este mes' : `Gastado en ${nombreMes(mes, false).toLowerCase()}`;
-  animarNumero($('#heroMonto'), total);
+  if (state.discreto) { $('#heroMonto').textContent = OCULTO; $('#heroMonto').dataset.v = total; }
+  else animarNumero($('#heroMonto'), total);
   const acumPrev = acumulado(anteriores, diasDelMes(previo));
   const comparable = esActual ? acumPrev[Math.min(transcurridos, acumPrev.length) - 1] || 0 : suma(anteriores);
   const delta = $('#heroDelta');
@@ -882,7 +889,7 @@ function renderMovimientos() {
 
 function renderPresupuesto() {
   const actuales = delMes(gastosTodos(), state.mes);
-  if (sinCambios('presupuesto', state.mes, firmaDatos(actuales), state.config)) return;
+  if (sinCambios('presupuesto', state.mes, firmaDatos(actuales), state.config, state.discreto)) return;
   const total = suma(actuales);
   const pres = presupuestoTotal();
   const dias = diasDelMes(state.mes);
@@ -963,6 +970,7 @@ $('#formPres').addEventListener('submit', async (ev) => {
 // ---------- Ajustes ----------
 
 function renderAjustes() {
+  renderEstadoSistema();
   if (!state.borrador) state.borrador = structuredClone(state.config);
   const b = state.borrador;
   if (document.activeElement?.id !== 'cfgUrl') $('#cfgUrl').value = state.conexion.url;
@@ -1139,10 +1147,13 @@ $('#formGasto').addEventListener('submit', async (ev) => {
   if (gasto.tarjeta) localStorageSet('ultimaTarjeta', gasto.tarjeta);
   state.recienGuardado = gasto.id;
   setTimeout(() => { state.recienGuardado = ''; }, 1500);
+  // Si elegiste a mano una categoría distinta de la que darían las reglas, ofrecer recordarla.
+  const aprender = form.manual && gasto.comercio && gasto.categoria !== categorizar(gasto.comercio) && (!g || g.categoria !== gasto.categoria);
   cerrarHoja($('#hoja'));
   vibrar(12);
   await encolar({ accion: 'guardar', gasto });
   toast(`${g ? 'Actualizado' : 'Guardado'}: ${gs(monto)} · ${gasto.categoria}`);
+  if (aprender) abrirRegla(gasto);
   if (!gasto.fecha.startsWith(state.mes)) { state.mes = gasto.fecha.slice(0, 7); render(); }
 });
 
@@ -1152,6 +1163,160 @@ $('#btnBorrar').addEventListener('click', async () => {
   cerrarHoja($('#hoja'));
   await encolar({ accion: 'borrar', id: g.id });
   toast('Gasto borrado');
+});
+
+// ---------- Reglas que aprenden ----------
+
+let reglaCtx = null;
+
+/** "PETROBRAS SHAH 43 ASUNCION" -> "Petrobras"; "Transferencia a Liana Monserrat Martinez" -> "Liana Monserrat". */
+function sugerirPatron(comercio) {
+  const esTransf = /^transferencia a /i.test(comercio);
+  const palabras = nombreBonito(comercio).replace(/^transferencia a /i, '').split(/\s+/).filter((w) => w && !/\d/.test(w));
+  if (esTransf) return palabras.slice(0, 2).join(' ');
+  const largas = palabras.filter((w) => w.length > 2);
+  if (!largas.length) return palabras.join(' ');
+  return largas[0].length >= 4 ? largas[0] : largas.slice(0, 2).join(' ');
+}
+
+function similaresA(patron, categoria) {
+  return gastosTodos().filter((x) => x.id !== reglaCtx?.id && x.categoria !== categoria && coincidePatron(x.comercio, patron));
+}
+
+function abrirRegla(gasto) {
+  reglaCtx = gasto;
+  $('#fPatron').value = sugerirPatron(gasto.comercio);
+  $('#reglaCategoria').textContent = `${iconoDe(gasto.categoria)} ${gasto.categoria}`;
+  actualizarAplicar();
+  setTimeout(() => abrirHoja($('#hojaRegla')), 450); // después de que se cierre la hoja del gasto
+}
+
+function actualizarAplicar() {
+  const n = similaresA($('#fPatron').value, reglaCtx.categoria).length;
+  $('#reglaAplicarFila').hidden = !n;
+  $('#reglaAplicarTxt').textContent = `Cambiar también ${n} gasto${n === 1 ? '' : 's'} anterior${n === 1 ? '' : 'es'} con ese comercio`;
+}
+$('#fPatron').addEventListener('input', actualizarAplicar);
+
+$('#formRegla').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const patron = $('#fPatron').value.trim();
+  if (!patron) return;
+  const categoria = reglaCtx.categoria;
+  const aplicar = $('#fAplicar').checked ? similaresA(patron, categoria) : [];
+  const cfg = structuredClone(state.config);
+  // la regla nueva va primero: gana sobre las anteriores que coincidan
+  cfg.reglas = [{ patron, categoria }, ...cfg.reglas.filter((r) => normalizar(r.patron) !== normalizar(patron))];
+  state.config = cfg;
+  state.borrador = null;
+  await store.set('config', cfg);
+  cerrarHoja($('#hojaRegla'));
+  vibrar(10);
+  await encolar({ accion: 'config', config: cfg });
+  for (const x of aplicar) {
+    const { pendiente, ...gasto } = x;
+    await encolar({ accion: 'guardar', gasto: { ...gasto, categoria } });
+  }
+  toast(`Regla creada: "${patron}" → ${categoria}${aplicar.length ? ` · ${aplicar.length} gasto${aplicar.length === 1 ? '' : 's'} actualizado${aplicar.length === 1 ? '' : 's'}` : ''}`);
+});
+
+// ---------- Estado del sistema ----------
+
+const CADA_CUANTO_ESTADO = 3 * 60 * 60 * 1000; // revisar solo cada 3 horas al abrir la app
+
+function hace(fecha, ahora) {
+  if (!fecha) return 'nunca';
+  const min = Math.round(minutos(ahora) - minutos(fecha));
+  if (min < 1) return 'recién';
+  if (min < 60) return `hace ${min} min`;
+  if (min < 1440) return `hace ${Math.round(min / 60)} h`;
+  const d = Math.round(min / 1440);
+  return `hace ${d} día${d === 1 ? '' : 's'}`;
+}
+const diasDesde = (fecha, ahora) => (fecha ? (minutos(ahora) - minutos(fecha)) / 1440 : Infinity);
+
+/** Convierte el estado del servidor en filas con semáforo. */
+function filasEstado(e) {
+  const filas = [];
+  const minLectura = e.lecturaCorreos ? minutos(e.ahora) - minutos(e.lecturaCorreos) : Infinity;
+  filas.push({
+    nombre: 'Lectura automática de mails',
+    cuando: hace(e.lecturaCorreos, e.ahora),
+    nivel: minLectura <= 30 ? 'ok' : 'mal',
+    nota: minLectura <= 30 ? 'Revisa Familiar y GNB cada 10 minutos' : 'Está detenida: los mails del banco no se leen',
+  });
+  filas.push({ nombre: 'Último aviso por mail', cuando: hace(e.mail, e.ahora), nivel: 'gris', nota: 'Transferencias y pagos de servicios' });
+  const fuente = (nombre, fecha, dias, nota) => {
+    const d = diasDesde(fecha, e.ahora);
+    filas.push({ nombre, cuando: hace(fecha, e.ahora), nivel: d <= dias ? 'ok' : 'aviso', nota: d <= dias ? nota : `Sin avisos hace más de ${dias} días. Si usaste esa tarjeta, revisá la automatización` });
+  };
+  fuente('Apple Pay', e.applepay, 7, 'Automatización "Transacción"');
+  fuente('SMS GNB', e.smsGnb, 10, 'Automatización "SMS GNB"');
+  fuente('SMS Continental', e.smsContinental, 10, 'Automatización "SMS Continental"');
+  const dRespaldo = diasDesde(e.respaldo, e.ahora);
+  filas.push({ nombre: 'Respaldo semanal', cuando: hace(e.respaldo, e.ahora), nivel: dRespaldo <= 8 ? 'ok' : 'aviso', nota: 'Copia en Drive cada domingo' });
+  filas.push({ nombre: 'Errores (7 días)', cuando: String(e.errores), nivel: e.errores ? 'mal' : 'ok', nota: e.errores ? 'Mirá "Últimos avisos procesados"' : 'Sin errores' });
+  const pend = state.cola.length;
+  filas.push({ nombre: 'Pendientes en este dispositivo', cuando: String(pend), nivel: pend ? 'aviso' : 'ok', nota: pend ? 'Se envían cuando haya conexión' : 'Todo enviado' });
+  return filas;
+}
+
+async function cargarEstado() {
+  if (!conectado() || !state.online) return;
+  try {
+    const r = await apiGet({ estado: 1 });
+    if (!r.ok) throw new Error(r.error);
+    state.estadoSis = r.estado;
+    localStorageSet('estadoSis', JSON.stringify({ t: Date.now(), e: r.estado }));
+  } catch (err) {
+    console.warn('No se pudo leer el estado', err);
+  }
+  renderEstadoSistema();
+  if (state.vista === 'inicio') renderAlertaSistema();
+}
+
+function renderEstadoSistema() {
+  const e = state.estadoSis;
+  const ul = $('#listaEstado');
+  if (!e) { ul.replaceChildren(el('li', { class: 'vacio-grafico' }, conectado() ? 'Cargando…' : 'Conectá la app para ver el estado.')); return; }
+  ul.replaceChildren(...filasEstado(e).map((f) => el('li', { class: 'fila-estado' },
+    el('span', { class: 'luz ' + (f.nivel === 'ok' ? '' : f.nivel) }),
+    el('div', { class: 'nom' }, f.nombre, el('span', { class: 'nota' }, f.nota)),
+    el('span', { class: 'cuando' }, f.cuando),
+  )));
+  $('#listaAvisos').replaceChildren(...(e.ultimosAvisos || []).map((a) => el('li', {},
+    el('div', { class: 'cab-aviso' }, el('span', {}, `${(NOMBRES_FUENTE[a.fuente] || a.fuente)} · ${a.resultado}`), el('span', {}, hace(a.fecha, e.ahora))),
+    el('div', { class: 'det' }, state.discreto ? a.detalle.replace(/\d[\d.,]{2,}/g, '•••') : a.detalle),
+  )));
+}
+
+function renderAlertaSistema() {
+  const e = state.estadoSis;
+  const malas = e ? filasEstado(e).filter((f) => f.nivel === 'mal') : [];
+  $('#alertaSistema').hidden = !malas.length;
+  if (malas.length) {
+    $('#alertaSistemaTit').textContent = malas[0].nombre;
+    $('#alertaSistemaSub').textContent = malas[0].nota;
+  }
+}
+$('#alertaSistema').addEventListener('click', () => cambiarVista('ajustes'));
+$('#btnEstado').addEventListener('click', () => { $('#listaEstado').replaceChildren(el('li', { class: 'vacio-grafico' }, 'Actualizando…')); cargarEstado(); });
+
+// ---------- Modo discreto ----------
+
+function aplicarDiscreto() {
+  document.body.classList.toggle('discreto', state.discreto);
+  $('#btnDiscreto').setAttribute('aria-pressed', String(state.discreto));
+  $('#btnDiscreto').setAttribute('aria-label', state.discreto ? 'Mostrar montos' : 'Ocultar montos');
+}
+$('#btnDiscreto').addEventListener('click', () => {
+  state.discreto = !state.discreto;
+  localStorageSet('discreto', state.discreto ? '1' : '');
+  vibrar(6);
+  aplicarDiscreto();
+  for (const k of Object.keys(firmas)) firmas[k] = '';
+  render();
+  if (state.vista === 'ajustes') renderEstadoSistema();
 });
 
 // ---------- CSV ----------
@@ -1238,6 +1403,7 @@ $('#btnConectar').onclick = async () => {
     state.ultimoError = '';
     state.borrador = null;
     toast('Conexión correcta ✓');
+    cargarEstado();
   } catch (err) {
     state.ultimoError = err.message;
     toast('No conecta: ' + err.message);
@@ -1288,6 +1454,13 @@ state.conexion = (await store.get('conexion')) || state.conexion;
 state.config = (await store.get('config')) || state.config;
 state.todos = (await store.get('gastos:todos')) || [];
 state.cola = await store.cola();
+state.discreto = localStorageGet('discreto') === '1';
+aplicarDiscreto();
+try {
+  const guardado = JSON.parse(localStorageGet('estadoSis') || 'null');
+  if (guardado) state.estadoSis = guardado.e;
+  if (!guardado || Date.now() - guardado.t > CADA_CUANTO_ESTADO) setTimeout(cargarEstado, 4000);
+} catch { /* sin estado guardado */ }
 render();
 animarEntrada('entra');
 sincronizar();

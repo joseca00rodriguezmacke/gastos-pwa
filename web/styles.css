@@ -158,6 +158,45 @@ main { max-width: 640px; margin: 0 auto; padding: 8px 16px; }
 .hero-pie { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: .78rem; opacity: .88; }
 .hero-pie span:last-child { text-align: right; }
 
+/* ---------- Modo discreto ---------- */
+.top-acciones { display: flex; align-items: center; gap: 8px; }
+.ojo {
+  width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--card); box-shadow: var(--sombra);
+  display: grid; place-items: center; color: var(--text-2); transition: transform .15s var(--ease), background .2s;
+}
+.ojo:active { transform: scale(.9); }
+.ojo svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ojo .ojo-cerrado, .discreto .ojo .ojo-abierto { display: none; }
+.discreto .ojo .ojo-cerrado { display: block; }
+.discreto .ojo { background: var(--text); color: var(--bg); }
+
+/* ---------- Estado del sistema ---------- */
+.estado-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.estado-lista li.fila-estado { display: grid; grid-template-columns: 12px 1fr auto; gap: 12px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.estado-lista li.fila-estado:first-child { border-top: 0; }
+.estado-lista .luz { width: 10px; height: 10px; border-radius: 50%; background: var(--good); }
+.estado-lista .luz.aviso { background: var(--warning); }
+.estado-lista .luz.mal { background: var(--critical); }
+.estado-lista .luz.gris { background: var(--serie-previa); }
+.estado-lista .nom { font-size: .9rem; font-weight: 600; }
+.estado-lista .nota { display: block; color: var(--muted); font-size: .74rem; font-weight: 500; margin-top: 1px; }
+.estado-lista .cuando { color: var(--text-2); font-size: .8rem; text-align: right; white-space: nowrap; }
+.avisos { margin-top: 10px; }
+.avisos summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: .86rem; padding: 6px 0; list-style: none; }
+:root:not([data-theme="light"]) .avisos summary { color: var(--accent); }
+.avisos-lista { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
+.avisos-lista li { background: var(--card-2); border-radius: 12px; padding: 9px 11px; font-size: .78rem; }
+.avisos-lista .cab-aviso { display: flex; justify-content: space-between; gap: 8px; font-weight: 650; margin-bottom: 3px; }
+.avisos-lista .cab-aviso span:last-child { color: var(--muted); font-weight: 500; }
+.avisos-lista .det { color: var(--muted); overflow-wrap: anywhere; }
+
+/* ---------- Reglas que aprenden ---------- */
+.regla-pregunta { color: var(--text-2); font-size: .9rem; margin: 10px 0 8px; }
+.regla-pregunta b { color: var(--text); }
+#fPatron { font-size: 18px; font-weight: 650; }
+label.check { display: flex; gap: 10px; align-items: center; margin: 14px 0; color: var(--text-2); font-size: .86rem; font-weight: 500; }
+label.check input { width: 20px; height: 20px; flex: none; padding: 0; accent-color: var(--accent); -webkit-appearance: auto; appearance: auto; }
+
 /* ---------- Alerta de duplicados ---------- */
 .alerta {
   display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: center; text-align: left; width: 100%;

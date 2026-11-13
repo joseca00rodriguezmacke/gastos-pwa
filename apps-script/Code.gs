@@ -95,6 +95,7 @@ function doGet(e) {
   return responder(function () {
     const p = (e && e.parameter) || {};
     autorizar(p.token);
+    if (p.estado) return { ok: true, estado: estadoSistema() };
     return { ok: true, gastos: listarGastos(p.mes || ''), config: leerConfig() };
   });
 }
@@ -501,6 +502,7 @@ function procesarCorreos() {
   if (!lock.tryLock(20000)) return;
   try {
     const props = PropertiesService.getScriptProperties();
+    props.setProperty('CORREOS_ULTIMA_CORRIDA', normalizarFecha(''));
     const desde = Number(props.getProperty('CORREOS_DESDE')) || Math.floor(Date.now() / 1000) - 3600;
     const consulta = 'from:(' + REMITENTES_BANCO.join(' OR ') + ') after:' + (desde - 600);
     let ultimo = desde;
@@ -638,6 +640,52 @@ function fechaDeTexto(s) {
 
 function titulo(s) {
   return String(s || '').trim().toLowerCase().replace(/(^|[\s\-/.(])(\S)/g, function (m, a, b) { return a + b.toUpperCase(); });
+}
+
+// ---------- Estado del sistema ----------
+
+/** Cuándo llegó por última vez cada fuente, si la lectura de mails corre y los últimos avisos. */
+function estadoSistema() {
+  const reg = filasRegistro().slice(1).map(function (f) {
+    return { fecha: textoFecha(f[0]), fuente: String(f[1]), aviso: String(f[2]), resultado: String(f[3]), detalle: String(f[4] || '') };
+  });
+  const ultimo = function (filtro) {
+    for (let i = reg.length - 1; i >= 0; i--) if (filtro(reg[i])) return reg[i].fecha;
+    return '';
+  };
+  let applepay = '';
+  leerObjetos('Gastos').forEach(function (g) {
+    const f = textoFecha(g.fecha);
+    if (/applepay/.test(String(g.origen)) && f > applepay) applepay = f;
+  });
+  ultimo(function (r) { if (r.fuente === 'applepay' && r.fecha > applepay) applepay = r.fecha; return false; });
+
+  let respaldo = '';
+  try {
+    const carpetas = DriveApp.getFoldersByName(CARPETA_RESPALDOS);
+    if (carpetas.hasNext()) {
+      const archivos = carpetas.next().getFiles();
+      while (archivos.hasNext()) {
+        const f = Utilities.formatDate(archivos.next().getDateCreated(), TZ, 'yyyy-MM-dd HH:mm');
+        if (f > respaldo) respaldo = f;
+      }
+    }
+  } catch (err) { /* sin permiso de Drive: se informa vacío */ }
+
+  const hace7 = Utilities.formatDate(new Date(Date.now() - 7 * 864e5), TZ, 'yyyy-MM-dd HH:mm');
+  return {
+    ahora: normalizarFecha(''),
+    lecturaCorreos: PropertiesService.getScriptProperties().getProperty('CORREOS_ULTIMA_CORRIDA') || '',
+    applepay: applepay,
+    smsGnb: ultimo(function (r) { return r.fuente === 'sms' && /banco gnb/i.test(r.detalle); }),
+    smsContinental: ultimo(function (r) { return r.fuente === 'sms' && /continental/i.test(r.detalle); }),
+    mail: ultimo(function (r) { return r.fuente === 'mail'; }),
+    respaldo: respaldo,
+    errores: reg.filter(function (r) { return /^error/.test(r.resultado) && r.fecha >= hace7; }).length,
+    ultimosAvisos: reg.slice(-20).reverse().map(function (r) {
+      return { fecha: r.fecha, fuente: r.fuente, resultado: r.resultado, detalle: r.detalle.replace(/\s+/g, ' ').slice(0, 140) };
+    }),
+  };
 }
 
 // ---------- Respaldo semanal ----------

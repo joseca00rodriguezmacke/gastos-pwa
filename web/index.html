@@ -22,7 +22,13 @@
         <span id="saludo" class="saludo-hola">Hola</span>
         <h1 id="tituloVista">Inicio</h1>
       </div>
-      <button id="estado" class="estado" type="button" aria-label="Estado de sincronización"><i></i><span></span></button>
+      <div class="top-acciones">
+        <button id="btnDiscreto" class="ojo" type="button" aria-label="Ocultar montos" aria-pressed="false">
+          <svg class="ojo-abierto" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="ojo-cerrado" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0112 5c6.4 0 10 7 10 7a17.6 17.6 0 01-3.1 3.9M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 005.4-1.6M9.9 9.9a3 3 0 004.2 4.2"/></svg>
+        </button>
+        <button id="estado" class="estado" type="button" aria-label="Estado de sincronización"><i></i><span></span></button>
+      </div>
     </div>
     <div class="selector-mes" id="selectorMes">
       <button id="mesPrev" class="mes-btn" aria-label="Mes anterior">
@@ -42,6 +48,11 @@
         <span class="alerta-ico">⚠︎</span>
         <span class="alerta-txt"><b id="alertaDupTit"></b><small>Puede que un pago se haya registrado dos veces.</small></span>
         <span class="alerta-cta">Revisar</span>
+      </button>
+      <button id="alertaSistema" class="alerta" type="button" hidden>
+        <span class="alerta-ico">!</span>
+        <span class="alerta-txt"><b id="alertaSistemaTit"></b><small id="alertaSistemaSub"></small></span>
+        <span class="alerta-cta">Ver</span>
       </button>
       <article class="hero" id="hero">
         <div class="hero-cab">
@@ -129,6 +140,15 @@
 
     <!-- AJUSTES -->
     <section id="vista-ajustes" class="vista" hidden>
+      <article class="card" id="cardEstado">
+        <div class="card-cab"><h2>Estado del sistema</h2><button class="link" id="btnEstado" type="button">Actualizar</button></div>
+        <ul id="listaEstado" class="estado-lista"><li class="vacio-grafico">Cargando…</li></ul>
+        <details class="avisos">
+          <summary>Últimos avisos procesados</summary>
+          <ul id="listaAvisos" class="avisos-lista"></ul>
+        </details>
+      </article>
+
       <article class="card">
         <h2>Conexión</h2>
         <label><span>URL de la web app (termina en <code>/exec</code>)</span>
@@ -233,6 +253,24 @@
         <input id="fPres" inputmode="numeric" placeholder="Sin límite">
       </label>
       <button type="submit" class="btn primario ancho">Guardar</button>
+    </form>
+  </div>
+
+  <!-- Recordar categoría (reglas que aprenden) -->
+  <div id="hojaRegla" class="hoja" hidden>
+    <div class="hoja-fondo" data-cerrar></div>
+    <form id="formRegla" class="hoja-panel chico">
+      <div class="hoja-asa"></div>
+      <div class="hoja-cab">
+        <button type="button" class="link" data-cerrar>Solo esta vez</button>
+        <b>¿Recordar?</b>
+        <span></span>
+      </div>
+      <p class="regla-pregunta">Cada vez que el comercio contenga…</p>
+      <input id="fPatron" autocomplete="off" required>
+      <p class="regla-pregunta">…ponerlo en <b id="reglaCategoria"></b></p>
+      <label class="check" id="reglaAplicarFila"><input type="checkbox" id="fAplicar" checked><span id="reglaAplicarTxt"></span></label>
+      <button type="submit" class="btn primario ancho">Crear regla</button>
     </form>
   </div>
 
