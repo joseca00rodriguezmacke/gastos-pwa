@@ -693,6 +693,9 @@ function aplicarReverso(g) {
   return '';
 }
 
+// Apps Script corta a los 6 minutos: cada pasada trabaja hasta 4,5 y deja el resto para la siguiente.
+const LIMITE_CORREOS_MS = 4.5 * 60 * 1000;
+
 /** Activador cada 10 minutos: lee los correos nuevos de los bancos (solo lectura). */
 function procesarCorreos() {
   const lock = LockService.getScriptLock();
@@ -705,20 +708,35 @@ function procesarCorreos() {
     CACHE_REGISTRO = new Set(filasRegistro().slice(1)
       .filter(function (f) { return !/^error/.test(String(f[3])); })
       .map(function (f) { return String(f[2]); }));
+    // Mails ya leídos (por id de Gmail): si una pasada se corta por tiempo, la siguiente sigue desde ahí.
+    const cache = CacheService.getScriptCache();
+    const vistos = new Set(JSON.parse(cache.get('CORREOS_VISTOS') || '[]'));
+    const inicio = Date.now();
+    let completo = true;
     let ultimo = desde;
-    GmailApp.search(consulta, 0, 100).forEach(function (hilo) {
-      hilo.getMessages().forEach(function (msg) {
+    const hilos = GmailApp.search(consulta, 0, 100);
+    recorrer:
+    for (let h = 0; h < hilos.length; h++) {
+      const mensajes = hilos[h].getMessages();
+      for (let m = 0; m < mensajes.length; m++) {
+        const msg = mensajes[m];
         const t = Math.floor(msg.getDate().getTime() / 1000);
-        if (t < desde - 600) return;
-        try {
-          procesarAviso(parsearCorreo(msg.getFrom(), msg.getSubject(), textoPlano(msg.getBody()), msg.getId()));
-        } catch (err) {
-          registrar('mail', 'error-' + msg.getId(), 'error: ' + err.message, msg.getSubject());
-        }
+        if (t < desde - 600) continue;
         if (t > ultimo) ultimo = t;
-      });
-    });
-    props.setProperty('CORREOS_DESDE', String(ultimo));
+        const idMsg = msg.getId();
+        if (vistos.has(idMsg)) continue;
+        if (Date.now() - inicio > LIMITE_CORREOS_MS) { completo = false; break recorrer; }
+        try {
+          procesarAviso(parsearCorreo(msg.getFrom(), msg.getSubject(), textoPlano(msg.getBody()), idMsg));
+        } catch (err) {
+          registrar('mail', 'error-' + idMsg, 'error: ' + err.message, msg.getSubject());
+        }
+        vistos.add(idMsg);
+      }
+    }
+    cache.put('CORREOS_VISTOS', JSON.stringify(Array.from(vistos).slice(-3000)), 21600);
+    // Solo se avanza la fecha cuando se leyó todo; si no, la próxima pasada (10 min) continúa.
+    if (completo) props.setProperty('CORREOS_DESDE', String(ultimo));
   } finally {
     CACHE_REGISTRO = null;
     lock.releaseLock();
