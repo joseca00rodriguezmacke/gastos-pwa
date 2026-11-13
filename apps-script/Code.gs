@@ -32,6 +32,7 @@ const HOJAS = {
   Ingresos: ['fecha', 'monto', 'pagador', 'categoria', 'banco', 'origen', 'id'],
   // accion: "gasto" o "ignorar"; limite: si el monto lo supera, no es gasto; etiqueta: nombre a mostrar
   Destinatarios: ['nombre', 'accion', 'categoria', 'etiqueta', 'limite'],
+  PagosTarjeta: ['fecha', 'monto', 'tarjeta', 'origen', 'id'],
 };
 
 const POR_REVISAR = 'Por revisar';
@@ -384,6 +385,13 @@ function procesarAviso(av) {
     av.ingreso.id = av.id;
     const i = guardarIngreso(av.ingreso);
     r = { resultado: 'ingreso ' + i.categoria, mensaje: 'Ingreso Gs ' + formatearGs(i.monto) + ' · ' + i.pagador + ' → ' + i.categoria };
+  } else if (av.tipo === 'pagoTarjeta') {
+    // No es un gasto (cada compra ya se registró): se guarda aparte para seguir el saldo de la tarjeta.
+    const p = guardarPagoTarjeta(Object.assign({ id: av.id }, av.pago));
+    r = {
+      resultado: 'pago de tarjeta',
+      mensaje: 'Pago de tarjeta ' + p.tarjeta + ': Gs ' + formatearGs(p.monto) + ' · no suma como gasto (las compras ya se registraron)',
+    };
   } else if (av.tipo === 'reverso') {
     const borrado = aplicarReverso(av.gasto);
     r = { resultado: borrado ? 'reverso aplicado' : 'reverso sin pago original', mensaje: borrado ? 'Reverso: se quitó ' + borrado : 'Reverso recibido (no se encontró el pago)' };
@@ -411,6 +419,19 @@ function parsearSms(texto) {
       origen: 'sms',
     };
     return Object.assign(base, { tipo: /reverso/i.test(m[1]) ? 'reverso' : 'gasto', gasto: gasto });
+  }
+
+  // Banco GNB, pago DE la tarjeta (sin comercio): "La operación de pago por Gs 115.000 en TC *1313 de ... el 13/11/2026 15:18"
+  m = t.match(/operaci[oó]n de pago\s+por\s+(USD|U\$S|Gs\.?|PYG)\s*([\d.,]+)\s+en\s+(T[CD])\s*\*?\s*(\d{3,4})[\s\S]*?el\s+(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/i);
+  if (m) {
+    return Object.assign(base, {
+      tipo: 'pagoTarjeta',
+      pago: {
+        fecha: fechaDeTexto(m[5]),
+        monto: m[1] + ' ' + m[2],
+        tarjeta: (/gnb/i.test(t) ? 'GNB ' : '') + m[3].toUpperCase() + ' *' + m[4],
+      },
+    });
   }
 
   // Banco Continental: "TRANS. APROBADA de la tarjeta DINELCO CLASICA 0677 , monto: 13.565-, en: SUPERSEIS HIPER."
@@ -652,6 +673,23 @@ function buscarFilaPorIdEn(sh, nombre, id) {
   return 0;
 }
 
+function guardarPagoTarjeta(p) {
+  asegurarHojasLecturas();
+  const pago = {
+    fecha: normalizarFecha(p.fecha),
+    monto: detectarMoneda(p.monto) === 'PYG' ? parsearMonto(p.monto) : Math.round(parsearDecimal(p.monto) * cotizacion(detectarMoneda(p.monto))),
+    tarjeta: String(p.tarjeta || '').trim(),
+    origen: String(p.origen || 'sms'),
+    id: String(p.id || Utilities.getUuid()),
+  };
+  const sh = hoja('PagosTarjeta');
+  const n = buscarFilaPorIdEn(sh, 'PagosTarjeta', pago.id);
+  const fila = HOJAS.PagosTarjeta.map(function (k) { return pago[k]; });
+  if (n) sh.getRange(n, 1, 1, fila.length).setValues([fila]);
+  else sh.appendRow(fila);
+  return pago;
+}
+
 function borrarFila(nombre, id) {
   if (!id || !SpreadsheetApp.getActive().getSheetByName(nombre)) return false;
   const sh = hoja(nombre);
@@ -706,7 +744,7 @@ function procesarCorreos() {
     const desde = Number(props.getProperty('CORREOS_DESDE')) || Math.floor(Date.now() / 1000) - 3600;
     const consulta = 'from:(' + REMITENTES_BANCO.join(' OR ') + ') after:' + (desde - 600);
     CACHE_REGISTRO = new Set(filasRegistro().slice(1)
-      .filter(function (f) { return !/^error/.test(String(f[3])); })
+      .filter(function (f) { return !SE_PUEDE_REPROCESAR.test(String(f[3])); })
       .map(function (f) { return String(f[2]); }));
     // Mails ya leídos (por id de Gmail): si una pasada se corta por tiempo, la siguiente sigue desde ahí.
     const cache = CacheService.getScriptCache();
@@ -768,7 +806,7 @@ const CATEGORIAS_EXTRA = [
 
 function asegurarHojasLecturas() {
   const ss = SpreadsheetApp.getActive();
-  ['Registro', 'Ajustes', 'Ingresos', 'Destinatarios'].forEach(function (nombre) {
+  ['Registro', 'Ajustes', 'Ingresos', 'Destinatarios', 'PagosTarjeta'].forEach(function (nombre) {
     const sh = ss.getSheetByName(nombre) || ss.insertSheet(nombre);
     if (sh.getLastRow() === 0) sh.appendRow(HOJAS[nombre]);
   });
@@ -806,7 +844,7 @@ function registrar(fuente, aviso, resultado, detalle) {
   const sh = SpreadsheetApp.getActive().getSheetByName('Registro');
   if (!sh) return;
   sh.appendRow([normalizarFecha(''), fuente, aviso, resultado, String(detalle || '').slice(0, 500)]);
-  if (CACHE_REGISTRO && !/^error/.test(resultado)) CACHE_REGISTRO.add(aviso);
+  if (CACHE_REGISTRO && !SE_PUEDE_REPROCESAR.test(resultado)) CACHE_REGISTRO.add(aviso);
   if (sh.getLastRow() > MAX_REGISTRO + 200) sh.deleteRows(2, 200);
 }
 
@@ -818,9 +856,12 @@ function filasRegistro() {
 // Durante procesarCorreos se cachean los avisos ya registrados: evita releer la hoja por cada mail.
 let CACHE_REGISTRO = null;
 
+/** Los errores y los formatos no reconocidos no cuentan: si se reenvían (p. ej. tras sumar un formato), se reprocesan. */
+const SE_PUEDE_REPROCESAR = /^(error|ignorado: formato)/;
+
 function yaRegistrado(aviso) {
   if (CACHE_REGISTRO) return CACHE_REGISTRO.has(aviso);
-  return filasRegistro().some(function (f) { return String(f[2]) === aviso && !/^error/.test(String(f[3])); });
+  return filasRegistro().some(function (f) { return String(f[2]) === aviso && !SE_PUEDE_REPROCESAR.test(String(f[3])); });
 }
 
 function aliasFusion(aviso) {
