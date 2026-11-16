@@ -33,7 +33,7 @@ const ICONOS = {
   suscripciones: '📺', hogar: '🏠', casa: '🏠', ocio: '🎉', entretenimiento: '🎬', ropa: '👕', educacion: '📚',
   viajes: '✈️', regalos: '🎁', mascotas: '🐾', deporte: '🏋️', gimnasio: '🏋️', tecnologia: '💻', belleza: '💅',
   impuestos: '🧾', bancos: '🏦', hijos: '🧸', transferencias: '💸', inversiones: '📈',
-  'por revisar': '❓', sueldo: '💼', ventas: '🧾', otros: '📦',
+  'por revisar': '❓', sueldo: '💼', ventas: '🧾', compras: '🛍️', creditos: '🏦', devoluciones: '↩️', otros: '📦',
 };
 const POR_REVISAR = 'Por revisar';
 const CATS_INGRESO = ['Sueldo', 'Ventas'];

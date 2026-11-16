@@ -131,7 +131,15 @@ function doPost(e) {
         return { ok: true, resultado: r.resultado, gasto: r.gasto, mensaje: r.mensaje };
       }
       if (accion === 'guardar') {
-        const gasto = guardarGasto(body.gasto || body);
+        const crudo = body.gasto || body;
+        let gasto;
+        try {
+          gasto = guardarGasto(crudo);
+        } catch (err) {
+          registrarApplePay(crudo, 'error: ' + err.message);
+          throw err;
+        }
+        registrarApplePay(crudo, gasto.fusionado ? 'fusionado' : 'guardado');
         return {
           ok: true,
           gasto: gasto,
@@ -305,10 +313,25 @@ function guardarLote(lineas) {
     linea = linea.trim();
     if (!linea) return;
     let g;
-    try { g = JSON.parse(linea); } catch (err) { return; }
-    try { guardados.push(guardarGasto(g, true)); } catch (err) { /* monto inválido: se descarta esa línea */ }
+    try { g = JSON.parse(linea); } catch (err) { registrarApplePay({ origen: 'applepay', linea: linea }, 'error: línea ilegible'); return; }
+    try {
+      const x = guardarGasto(g, true);
+      guardados.push(x);
+      registrarApplePay(g, x.fusionado ? 'fusionado' : 'guardado');
+    } catch (err) {
+      registrarApplePay(g, 'error: ' + err.message); // monto inválido: se descarta esa línea
+    }
   });
   return guardados;
+}
+
+/** Deja en el Registro cada intento de Apple Pay con lo que mandó el iPhone (sin el token), para diagnosticar. */
+function registrarApplePay(crudo, resultado) {
+  // solo lo que llega del iPhone ("applepay"), no las ediciones desde la app ("applepay+sms", etc.)
+  if (!/^applepay($|\s)/.test(String((crudo && crudo.origen) || ''))) return;
+  const detalle = {};
+  Object.keys(crudo).forEach(function (k) { if (k !== 'token' && k !== 'accion') detalle[k] = crudo[k]; });
+  registrar('applepay', 'ap-' + resumenHex(JSON.stringify(detalle) + Date.now()), resultado, JSON.stringify(detalle));
 }
 
 function borrarGasto(id) {
