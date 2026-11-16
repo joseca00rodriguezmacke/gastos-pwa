@@ -1004,31 +1004,39 @@ function gemini(prompt, json) {
   const aj = ajustes();
   const clave = String(aj.gemini_key || '').trim();
   if (!clave) throw new Error('IA sin configurar: falta gemini_key en la hoja Ajustes');
-  const modelo = String(aj.gemini_modelo || IA_MODELO_DEFECTO).trim();
+  let principal = String(aj.gemini_modelo || IA_MODELO_DEFECTO).trim();
   const cuerpo = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } };
   if (json) cuerpo.generationConfig.responseMimeType = 'application/json';
-  let usado = modelo;
-  let r;
-  // Saturación (429/5xx): hasta 3 intentos. Modelo retirado (404 que sugiere otro): se cambia solo y se guarda.
-  let reintentos = 0;
-  for (let vuelta = 0; vuelta < 5; vuelta++) {
-    r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + usado + ':generateContent', {
+  const pedir = function (modelo) {
+    return UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent', {
       method: 'post',
       contentType: 'application/json',
       headers: { 'x-goog-api-key': clave },
       payload: JSON.stringify(cuerpo),
       muteHttpExceptions: true,
     });
-    const code = r.getResponseCode();
-    if (code === 200) break;
-    const sugerido = code === 404 && (r.getContentText().match(/use models\/([a-z0-9.\-]+)/i) || [])[1];
-    if (sugerido && sugerido !== usado) { usado = sugerido; fijarAjuste('gemini_modelo', usado); continue; }
-    if ((code === 429 || code >= 500) && reintentos < 2) { reintentos++; Utilities.sleep(1500 * reintentos); continue; }
-    break;
+  };
+  const saturado = function (code) { return code === 429 || code >= 500; };
+  let r = pedir(principal);
+  // Modelo retirado (404 que sugiere otro): se cambia solo y se guarda.
+  const sugerido = r.getResponseCode() === 404 && (r.getContentText().match(/use models\/([a-z0-9.\-]+)/i) || [])[1];
+  if (sugerido && sugerido !== principal) {
+    principal = sugerido;
+    fijarAjuste('gemini_modelo', principal);
+    r = pedir(principal);
+  }
+  // Saturación: un reintento corto y después los otros modelos "flash" de la cuenta, del más nuevo al más viejo.
+  if (saturado(r.getResponseCode())) {
+    Utilities.sleep(1200);
+    r = pedir(principal);
+  }
+  if (saturado(r.getResponseCode())) {
+    const alternativos = modelosAlternativos(clave, principal);
+    for (let i = 0; i < alternativos.length && i < 3 && saturado(r.getResponseCode()); i++) r = pedir(alternativos[i]);
   }
   if (r.getResponseCode() !== 200) {
     const code = r.getResponseCode();
-    if (code === 429 || code >= 500) throw new Error('La IA de Google está saturada en este momento, probá de nuevo en un rato');
+    if (saturado(code)) throw new Error('La IA de Google está saturada en este momento, probá de nuevo en un rato');
     throw new Error('Gemini ' + code + ': ' + r.getContentText().slice(0, 200));
   }
   const datos = JSON.parse(r.getContentText());
@@ -1036,6 +1044,32 @@ function gemini(prompt, json) {
   if (!json) return texto;
   const m = texto.match(/[\[{][\s\S]*[\]}]/);
   return JSON.parse(m ? m[0] : texto);
+}
+
+/** Modelos "flash" que la clave puede usar (ListModels), sin el principal; se guardan 6 h en caché. */
+function modelosAlternativos(clave, principal) {
+  const cache = CacheService.getScriptCache();
+  let lista = null;
+  try { lista = JSON.parse(cache.get('modelos-ia') || 'null'); } catch (err) { lista = null; }
+  if (!lista) {
+    lista = [];
+    try {
+      const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+        headers: { 'x-goog-api-key': clave }, muteHttpExceptions: true,
+      });
+      if (r.getResponseCode() === 200) {
+        lista = (JSON.parse(r.getContentText()).models || [])
+          .filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') !== -1; })
+          .map(function (m) { return String(m.name || '').replace(/^models\//, ''); })
+          .filter(function (n) { return /flash/.test(n) && !/(image|tts|audio|live|thinking|embedding|exp)/.test(n); });
+        // Más nuevo primero (por número de versión); las "lite" al final.
+        const version = function (n) { const v = n.match(/(\d+(?:\.\d+)?)/); return v ? Number(v[1]) : 0; };
+        lista.sort(function (a, b) { return (/lite/.test(a) - /lite/.test(b)) || (version(b) - version(a)) || a.localeCompare(b); });
+      }
+    } catch (err) { lista = []; }
+    cache.put('modelos-ia', JSON.stringify(lista), 6 * 3600);
+  }
+  return lista.filter(function (n) { return n !== principal; });
 }
 
 /** Igual que gemini() pero nunca rompe: ante cualquier error devuelve null y lo anota en el Registro. */
