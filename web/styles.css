@@ -208,6 +208,20 @@ main { max-width: 640px; margin: 0 auto; padding: 8px 16px; }
 .dest-lista .det { color: var(--muted); font-size: .74rem; }
 .dest-lista .quitar { border: 0; background: transparent; color: var(--muted); font-size: 1.3rem; width: 34px; height: 34px; }
 
+/* ---------- IA, coach y suscripciones ---------- */
+.coach-txt { color: var(--text-2); font-size: .9rem; line-height: 1.5; margin: 0 0 10px; }
+.coach-txt b { color: var(--text); }
+.ia-btn { background: var(--accent-soft); color: var(--text); }
+.ia-respuesta { white-space: pre-wrap; background: var(--card-2); border-radius: 14px; padding: 12px 14px; font-size: .88rem; line-height: 1.55; margin-top: 10px; }
+.ia-respuesta.cargando { color: var(--muted); }
+.pregunta { display: flex; gap: 8px; margin: 10px 0; }
+.pregunta input { flex: 1; min-width: 0; }
+.pregunta .btn { flex: none; padding: 10px 14px; }
+#ejemplosPregunta .chip { font-size: .76rem; }
+.sugerencia-ia { color: var(--accent-2); font-size: .78rem; font-weight: 600; margin-top: 4px; }
+:root:not([data-theme="light"]) .sugerencia-ia { color: var(--accent); }
+.susc-sube { color: var(--critical); font-weight: 700; }
+
 /* ---------- Modo discreto ---------- */
 .top-acciones { display: flex; align-items: center; gap: 8px; }
 .ojo {

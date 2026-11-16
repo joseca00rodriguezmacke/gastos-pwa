@@ -89,6 +89,28 @@
         </div>
       </article>
 
+      <article class="card" id="cardCoach">
+        <div class="card-cab"><h2>🎯 Coach del mes</h2><button class="link" id="btnMeta" type="button">Meta: <span id="metaTxt">definir</span></button></div>
+        <p id="coachTxt" class="coach-txt"></p>
+        <button class="btn ancho ia-btn" id="btnConsejo" type="button" hidden>✨ Pedir consejo a la IA</button>
+        <div id="consejoTxt" class="ia-respuesta" hidden></div>
+      </article>
+
+      <article class="card" id="cardResumen" hidden>
+        <div class="card-cab"><h2>✨ Resumen de la semana</h2><span class="sub" id="resumenFecha"></span></div>
+        <div id="resumenTxt" class="ia-respuesta"></div>
+      </article>
+
+      <article class="card" id="cardPreguntar" hidden>
+        <h2>✨ Preguntale a tus gastos</h2>
+        <form id="formPregunta" class="pregunta">
+          <input id="fPregunta" placeholder="Ej: ¿cuánto gasté en restaurantes este mes?" autocomplete="off" enterkeyhint="send">
+          <button class="btn primario" type="submit">Preguntar</button>
+        </form>
+        <div class="chips" id="ejemplosPregunta"></div>
+        <div id="respuestaTxt" class="ia-respuesta" hidden></div>
+      </article>
+
       <article class="card">
         <div class="card-cab">
           <h2>Ritmo del mes</h2>
@@ -168,6 +190,10 @@
           <small id="presDe"></small>
           <small id="presRitmo" class="ritmo"></small>
         </div>
+      </article>
+      <article class="card" id="cardSuscripciones">
+        <div class="card-cab"><h2>📺 Suscripciones</h2><span class="sub" id="suscTotal"></span></div>
+        <ul id="listaSusc" class="top-lista"></ul>
       </article>
       <p class="ayuda">Tocá una categoría para ponerle o cambiarle el límite mensual.</p>
       <ul id="listaPres" class="pres-lista"></ul>

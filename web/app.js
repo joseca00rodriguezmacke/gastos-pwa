@@ -64,6 +64,7 @@ const state = {
   recienGuardado: '',
   ingresos: [],      // ingresos según el servidor (o caché)
   modoMov: 'gastos', // Movimientos: "gastos" o "ingresos"
+  ia: { disponible: false, resumen: null, consultarSiempre: [], metaAhorro: 0 }, // funciones de IA del servidor
   discreto: false,   // modo discreto: oculta los montos
   estadoSis: null,   // último estado del sistema traído del servidor
 };
@@ -285,6 +286,7 @@ async function cargarDelServidor() {
   await store.set('gastos:todos', r.gastos);
   state.ingresos = r.ingresos || [];
   await store.set('ingresos:todos', state.ingresos);
+  if (r.ia) { state.ia = r.ia; await store.set('ia', r.ia); }
   if (!hayConfigPendiente() && r.config?.categorias?.length) {
     state.config = r.config;
     await store.set('config', r.config);
@@ -521,8 +523,10 @@ function renderInicio() {
   $('#alertaRevisar').hidden = !revisar;
   $('#alertaRevisarTit').textContent = revisar === 1 ? '1 transferencia por revisar' : `${revisar} transferencias por revisar`;
   renderAlertaSistema();
-  if (sinCambios('inicio', mes, firmaDatos(conRevisar), firmaDatos(ingresos), state.config, state.discreto, $('#graficoRitmo').clientWidth, new Date().getDate())) return;
+  renderTarjetasIA();
+  if (sinCambios('inicio', mes, firmaDatos(conRevisar), firmaDatos(ingresos), state.config, state.ia, state.discreto, $('#graficoRitmo').clientWidth, new Date().getDate())) return;
   renderFlujo(delMes(ingresos, mes), suma(delMes(todos, mes)));
+  renderCoach(delMes(ingresos, mes), suma(delMes(todos, mes)));
   const previo = moverMes(mes, -1);
   const actuales = delMes(todos, mes);
   const anteriores = delMes(todos, previo);
@@ -947,6 +951,116 @@ function renderMovimientos() {
   $('#vacioMov').hidden = lista.length > 0;
 }
 
+// ---------- Coach, IA y suscripciones ----------
+
+/** Coach (sin IA): con lo que entró y lo que se gastó, cuánto se puede gastar por día para cumplir la meta. */
+function renderCoach(ingresos, gastado) {
+  const meta = Number(state.ia.metaAhorro) || 0;
+  $('#metaTxt').textContent = meta ? corto(meta) : 'definir';
+  const esActual = state.mes === mesActual();
+  const ing = suma(ingresos);
+  const txt = $('#coachTxt');
+  if (!esActual) {
+    const res = ing - gastado;
+    txt.innerHTML = '';
+    txt.append(`En ${nombreMes(state.mes, false).toLowerCase()} entraron `, el('b', {}, gs(ing)), ', gastaste ', el('b', {}, gs(gastado)),
+      res >= 0 ? ' y ahorraste ' : ' y faltaron ', el('b', {}, gs(Math.abs(res))), meta ? (res >= meta ? ' ✅ cumpliste la meta.' : ' ⚠️ no llegaste a la meta.') : '.');
+    return;
+  }
+  const quedan = diasDelMes(state.mes) - new Date().getDate() + 1;
+  const disponible = ing - gastado - meta;
+  txt.innerHTML = '';
+  if (!ing) { txt.append('Todavía no hay ingresos registrados este mes.'); return; }
+  txt.append('Entraron ', el('b', {}, gs(ing)), ' y gastaste ', el('b', {}, gs(gastado)), '. ');
+  if (!meta) txt.append('Definí una meta de ahorro (arriba a la derecha) y te digo cuánto podés gastar por día.');
+  else if (disponible > 0) txt.append(`Para ahorrar ${gs(meta)} este mes, podés gastar `, el('b', {}, gs(disponible / quedan) + ' por día'), ` los próximos ${quedan} días.`);
+  else txt.append('Con lo que entró hasta hoy, ya gastaste ', el('b', {}, gs(-disponible)), ' más de lo que permite la meta. Si todavía falta cobrar (sueldo, clientes), esto mejora cuando entre.');
+}
+
+$('#btnMeta').addEventListener('click', async () => {
+  const actual = Number(state.ia.metaAhorro) || 0;
+  const r = prompt('Meta de ahorro mensual (Gs). Dejá vacío para quitarla:', actual ? fmt.format(actual) : '');
+  if (r === null) return;
+  const meta = soloDigitos(r);
+  try {
+    const x = await apiPost({ accion: 'ajuste', clave: 'meta_ahorro', valor: meta });
+    if (!x.ok) throw new Error(x.error);
+    state.ia = x.ajustes;
+    await store.set('ia', state.ia);
+    firmas.inicio = '';
+    render();
+    toast(meta ? `Meta de ahorro: ${gs(meta)}` : 'Meta quitada');
+  } catch (err) { toast('No se pudo guardar: ' + err.message); }
+});
+
+async function pedirIA(cuerpo, destino) {
+  if (!state.online || !conectado()) return toast('Necesitás conexión');
+  destino.hidden = false;
+  destino.classList.add('cargando');
+  destino.textContent = '✨ Pensando…';
+  try {
+    const r = await apiPost(cuerpo);
+    if (!r.ok) throw new Error(r.error);
+    destino.textContent = r.respuesta;
+  } catch (err) {
+    destino.textContent = 'No se pudo: ' + err.message;
+  } finally {
+    destino.classList.remove('cargando');
+  }
+}
+
+const EJEMPLOS_PREGUNTA = ['¿Cuánto gasté en restaurantes este mes?', '¿Qué cliente me pagó más?', '¿En qué gasté más que el mes pasado?', '¿Cuánto pago de suscripciones?'];
+
+function renderTarjetasIA() {
+  const ia = state.ia || {};
+  $('#btnConsejo').hidden = !ia.disponible;
+  $('#cardPreguntar').hidden = !ia.disponible;
+  const r = ia.resumen;
+  $('#cardResumen').hidden = !(ia.disponible && r && r.texto);
+  if (r && r.texto) {
+    $('#resumenTxt').textContent = state.discreto ? r.texto.replace(/(Gs\.?\s*)?\d[\d.,]{3,}/g, 'Gs •••') : r.texto;
+    $('#resumenFecha').textContent = r.fecha ? new Date(r.fecha.replace(' ', 'T')).toLocaleDateString('es-PY', { day: 'numeric', month: 'short' }) : '';
+  }
+  if (!$('#ejemplosPregunta').children.length) {
+    $('#ejemplosPregunta').replaceChildren(...EJEMPLOS_PREGUNTA.map((p) => el('button', { type: 'button', class: 'chip', onclick: () => { $('#fPregunta').value = p; $('#formPregunta').requestSubmit(); } }, p)));
+  }
+}
+$('#btnConsejo').addEventListener('click', () => pedirIA({ accion: 'consejo', mes: state.mes }, $('#consejoTxt')));
+$('#formPregunta').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const pregunta = $('#fPregunta').value.trim();
+  if (pregunta) pedirIA({ accion: 'preguntar', pregunta }, $('#respuestaTxt'));
+});
+
+/** Suscripciones: último cobro de cada una, cuánto suman por mes y si alguna subió de precio. */
+function renderSuscripciones() {
+  const desde = moverMes(mesActual(), -2) + '-01';
+  const susc = gastosTodos().filter((g) => g.categoria === 'Suscripciones' && g.fecha >= desde);
+  const grupos = new Map();
+  for (const g of susc.sort((a, b) => a.fecha.localeCompare(b.fecha))) {
+    const nombre = nombreBonito(g.comercio).split(/[\s*]/).filter((w) => w.length > 1)[0] || g.comercio;
+    const k = normalizar(nombre);
+    const x = grupos.get(k) || { nombre, cobros: [] };
+    x.cobros.push(g);
+    grupos.set(k, x);
+  }
+  const filas = [...grupos.values()].map((x) => {
+    const ultimo = x.cobros.at(-1);
+    const previo = x.cobros.at(-2);
+    const sube = previo && ultimo.monto > previo.monto * 1.05 ? Math.round(((ultimo.monto - previo.monto) / previo.monto) * 100) : 0;
+    return { ...x, ultimo, sube };
+  }).sort((a, b) => b.ultimo.monto - a.ultimo.monto);
+  $('#suscTotal').textContent = filas.length ? `≈ ${gs(suma(filas.map((f) => f.ultimo)))} por mes` : '';
+  const ul = $('#listaSusc');
+  if (!filas.length) { ul.replaceChildren(el('li', { class: 'vacio-grafico', style: 'display:block' }, 'Sin suscripciones en los últimos meses.')); return; }
+  ul.replaceChildren(...filas.map((f) => el('li', {},
+    el('span', { class: 'rank', style: fondoIcono(colorDe('Suscripciones')) }, iconoDe('Suscripciones')),
+    el('div', { class: 'info' }, el('div', {}, f.nombre),
+      el('small', { class: f.sube ? 'susc-sube' : '' }, f.sube ? `↑ subió ${f.sube}%` : `último: ${etiquetaDia(f.ultimo.fecha.slice(0, 10))}`)),
+    el('div', { class: 'der' }, el('b', {}, gs(f.ultimo.monto)), el('small', {}, `${f.cobros.length} cobro${f.cobros.length === 1 ? '' : 's'}`)),
+  )));
+}
+
 // ---------- Ingresos ----------
 
 function etiquetaDia(dia) {
@@ -1047,26 +1161,45 @@ function abrirRevisar() {
     return;
   }
   const cats = state.config.categorias.map((c) => c.nombre);
+  const elegir = new Map(); // id -> función para preseleccionar una categoría (la usa la sugerencia de la IA)
   $('#listaRevisar').replaceChildren(...pendientes.map((g) => {
     const nombre = nombreDestinatario(g);
+    // Personas "a consultar siempre" (ej. Marcela): nunca se recuerda una regla, cada transferencia se decide.
+    const siempre = (state.ia.consultarSiempre || []).some((n) => coincidePatron(nombre, n) || coincidePatron(n, nombre));
     let elegida = '';
+    const marcar = (c) => {
+      elegida = c;
+      for (const x of chips.children) x.classList.toggle('activo', x.dataset.cat === c);
+      btnGuardar.disabled = false;
+    };
     const chips = el('div', { class: 'cat-chips' }, cats.map((c) => el('button', {
-      type: 'button', class: 'cat-chip',
-      onclick: (e) => { elegida = c; vibrar(5); for (const x of chips.children) x.classList.toggle('activo', x === e.currentTarget); btnGuardar.disabled = false; },
+      type: 'button', class: 'cat-chip', 'data-cat': c,
+      onclick: () => { vibrar(5); marcar(c); },
     }, el('span', { class: 'e' }, iconoDe(c)), el('span', {}, c))));
-    const recordar = el('input', { type: 'checkbox', checked: true });
+    const recordar = el('input', { type: 'checkbox', checked: !siempre });
     const btnGuardar = el('button', { type: 'button', class: 'btn primario', disabled: true, onclick: () => resolverRevisar(g, elegida, recordar.checked) }, 'Guardar');
+    const sugerencia = el('div', { class: 'sugerencia-ia', hidden: true });
+    elegir.set(g.id, (s) => { marcar(s.categoria); sugerencia.hidden = false; sugerencia.textContent = `✨ Sugerido: ${s.categoria}${s.motivo ? ' — ' + s.motivo : ''}`; });
     return el('div', { class: 'rev-item' },
       el('div', { class: 'rev-cab' }, el('b', {}, nombre), el('span', { class: 'm' }, gs(g.monto)),
         el('small', {}, [etiquetaDia(g.fecha.slice(0, 10)), g.fecha.slice(11, 16), g.tarjeta].filter(Boolean).join(' · '))),
+      sugerencia,
       chips,
-      el('label', { class: 'check' }, recordar, el('span', {}, `Recordar para ${nombre.split(' ').slice(0, 2).join(' ')}`)),
+      siempre
+        ? el('p', { class: 'ayuda' }, 'Con esta persona siempre se consulta: no se crea regla.')
+        : el('label', { class: 'check' }, recordar, el('span', {}, `Recordar para ${nombre.split(' ').slice(0, 2).join(' ')}`)),
       el('div', { class: 'rev-acciones' },
         el('button', { type: 'button', class: 'btn', onclick: () => resolverRevisar(g, '', recordar.checked) }, 'No es gasto'),
         btnGuardar),
     );
   }));
   if ($('#hojaRevisar').hidden) abrirHoja($('#hojaRevisar'));
+  // Sugerencias de la IA (si está configurada): preseleccionan la categoría, el usuario confirma.
+  if (state.ia.disponible && state.online && conectado()) {
+    apiPost({ accion: 'sugerencias' })
+      .then((r) => { for (const s of (r.ok && r.sugerencias) || []) elegir.get(s.id)?.(s); })
+      .catch(() => { /* sin sugerencias: se clasifica a mano */ });
+  }
 }
 
 /** categoria vacía = no es gasto. Con "recordar", crea la regla y resuelve igual las otras del mismo destinatario. */
@@ -1089,6 +1222,7 @@ $('#alertaRevisar').addEventListener('click', abrirRevisar);
 
 function renderPresupuesto() {
   const actuales = delMes(gastosTodos(), state.mes).filter(contable);
+  renderSuscripciones();
   if (sinCambios('presupuesto', state.mes, firmaDatos(actuales), state.config, state.discreto)) return;
   const total = suma(actuales);
   const pres = presupuestoTotal();
@@ -1682,6 +1816,7 @@ state.conexion = (await store.get('conexion')) || state.conexion;
 state.config = (await store.get('config')) || state.config;
 state.todos = (await store.get('gastos:todos')) || [];
 state.ingresos = (await store.get('ingresos:todos')) || [];
+state.ia = (await store.get('ia')) || state.ia;
 state.cola = await store.cola();
 state.discreto = localStorageGet('discreto') === '1';
 aplicarDiscreto();

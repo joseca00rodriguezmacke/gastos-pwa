@@ -1,6 +1,6 @@
 // Service worker: deja la app disponible offline.
 // Subí VERSION en cada despliegue para que los dispositivos tomen los archivos nuevos.
-const VERSION = 'gastos-v10';
+const VERSION = 'gastos-v11';
 const SHELL = [
   './',
   'index.html',

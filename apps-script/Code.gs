@@ -33,6 +33,8 @@ const HOJAS = {
   // accion: "gasto" o "ignorar"; limite: si el monto lo supera, no es gasto; etiqueta: nombre a mostrar
   Destinatarios: ['nombre', 'accion', 'categoria', 'etiqueta', 'limite'],
   PagosTarjeta: ['fecha', 'monto', 'tarjeta', 'origen', 'id'],
+  // clave = nombre del comercio normalizado (sin números); fuente = "ia" o "usuario"
+  Comercios: ['clave', 'nombre', 'categoria', 'fuente'],
 };
 
 const POR_REVISAR = 'Por revisar';
@@ -102,7 +104,7 @@ function doGet(e) {
     const p = (e && e.parameter) || {};
     autorizar(p.token);
     if (p.estado) return { ok: true, estado: estadoSistema() };
-    return { ok: true, gastos: listarGastos(p.mes || ''), ingresos: listarIngresos(p.mes || ''), config: leerConfig() };
+    return { ok: true, gastos: listarGastos(p.mes || ''), ingresos: listarIngresos(p.mes || ''), config: leerConfig(), ia: infoIA() };
   });
 }
 
@@ -127,9 +129,15 @@ function doPost(e) {
         };
       }
       if (accion === 'sms' || (body.texto !== undefined && body.accion === undefined)) {
-        const r = procesarAviso(parsearSms(body.texto));
+        const r = procesarAviso(conLectorIA(parsearSms(body.texto), body.texto, 'sms'));
         return { ok: true, resultado: r.resultado, gasto: r.gasto, mensaje: r.mensaje };
       }
+      if (accion === 'sugerencias') return { ok: true, sugerencias: sugerirPorRevisar() };
+      if (accion === 'preguntar') return { ok: true, respuesta: preguntarGastos(String(body.pregunta || '')) };
+      if (accion === 'consejo') return { ok: true, respuesta: consejoMes(String(body.mes || '')) };
+      if (accion === 'ajuste') return { ok: true, ajustes: guardarAjuste(String(body.clave || ''), body.valor) };
+      if (accion === 'iaMantenimiento') return { ok: true, resultado: unificarComerciosExistentes() };
+      if (accion === 'resumenAhora') return { ok: true, resumen: resumenSemanal(true) };
       if (accion === 'guardar') {
         const crudo = body.gasto || body;
         let gasto;
@@ -204,6 +212,17 @@ function guardarGasto(g, soloSiNuevo) {
     // Con "momento" el id sale del contenido: reenviar el mismo gasto lo actualiza en vez de duplicarlo.
     id: String(g.id || (momento ? 'sc-' + resumenHex(momento + '|' + monto + '|' + comercio + '|' + tarjeta) : Utilities.getUuid())),
   };
+  // Comercio de un aviso automático: nombre unificado y, si ninguna regla lo clasificó, categoría sugerida por IA.
+  if (!String(g.categoria || '').trim() && FUENTES_AUTOMATICAS.indexOf(fuenteDe(origen)) !== -1 && comercio && !/^Transferencia a /i.test(comercio)) {
+    const info = infoComercio(comercio);
+    if (info) {
+      if (info.nombre) gasto.comercio = info.nombre;
+      if (gasto.categoria === CATEGORIA_DEFECTO) {
+        const porRegla = categorizar(info.nombre || '', leerConfig().reglas);
+        gasto.categoria = porRegla !== CATEGORIA_DEFECTO ? porRegla : (info.categoria || CATEGORIA_DEFECTO);
+      }
+    }
+  }
   const sh = hoja('Gastos');
   const n = buscarFilaPorId(sh, gasto.id);
   if (n && soloSiNuevo) {
@@ -425,6 +444,7 @@ function procesarAviso(av) {
   } else {
     r = { resultado: 'ignorado: ' + av.motivo, mensaje: 'Ignorado: ' + av.motivo };
   }
+  if (av.porIA) { r.resultado += ' (IA)'; r.mensaje += ' · leído por IA'; }
   registrar(av.fuente, av.id, r.resultado, av.texto);
   return r;
 }
@@ -833,7 +853,7 @@ const CATEGORIAS_EXTRA = [
 
 function asegurarHojasLecturas() {
   const ss = SpreadsheetApp.getActive();
-  ['Registro', 'Ajustes', 'Ingresos', 'Destinatarios', 'PagosTarjeta'].forEach(function (nombre) {
+  ['Registro', 'Ajustes', 'Ingresos', 'Destinatarios', 'PagosTarjeta', 'Comercios'].forEach(function (nombre) {
     const sh = ss.getSheetByName(nombre) || ss.insertSheet(nombre);
     if (sh.getLastRow() === 0) sh.appendRow(HOJAS[nombre]);
   });
@@ -940,6 +960,322 @@ function fechaDeTexto(s) {
 
 function titulo(s) {
   return String(s || '').trim().toLowerCase().replace(/(^|[\s\-/.(])(\S)/g, function (m, a, b) { return a + b.toUpperCase(); });
+}
+
+// ---------- IA (Gemini, plan gratuito) ----------
+//
+// La clave se pega en la hoja Ajustes (fila "gemini_key"). Sin clave, todo funciona como antes.
+// A Gemini se le manda lo mínimo: textos de avisos, nombres de comercios y montos agregados;
+// nunca el token ni números de cuenta.
+
+const IA_MODELO_DEFECTO = 'gemini-2.5-flash';
+
+function iaDisponible() {
+  return !!String(ajustes().gemini_key || '').trim();
+}
+
+/** Llama a Gemini. Con json=true pide y parsea una respuesta JSON. */
+function gemini(prompt, json) {
+  const aj = ajustes();
+  const clave = String(aj.gemini_key || '').trim();
+  if (!clave) throw new Error('IA sin configurar: falta gemini_key en la hoja Ajustes');
+  const modelo = String(aj.gemini_modelo || IA_MODELO_DEFECTO).trim();
+  const cuerpo = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } };
+  if (json) cuerpo.generationConfig.responseMimeType = 'application/json';
+  const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-goog-api-key': clave },
+    payload: JSON.stringify(cuerpo),
+    muteHttpExceptions: true,
+  });
+  if (r.getResponseCode() !== 200) throw new Error('Gemini ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 200));
+  const datos = JSON.parse(r.getContentText());
+  const texto = ((((datos.candidates || [])[0] || {}).content || {}).parts || []).map(function (p) { return p.text || ''; }).join('').trim();
+  if (!json) return texto;
+  const m = texto.match(/[\[{][\s\S]*[\]}]/);
+  return JSON.parse(m ? m[0] : texto);
+}
+
+/** Igual que gemini() pero nunca rompe: ante cualquier error devuelve null y lo anota en el Registro. */
+function geminiSeguro(prompt, json, contexto) {
+  if (!iaDisponible()) return null;
+  try {
+    return gemini(prompt, json);
+  } catch (err) {
+    registrar('ia', 'ia-' + resumenHex(contexto + Date.now()), 'error: ' + err.message, contexto);
+    return null;
+  }
+}
+
+function infoIA() {
+  const aj = ajustes();
+  let resumen = null;
+  try { resumen = JSON.parse(String(aj.resumen_semanal || 'null')); } catch (err) { /* sin resumen */ }
+  return {
+    disponible: iaDisponible(),
+    resumen: resumen,
+    consultarSiempre: String(aj.consultar_siempre || '').split(',').map(function (s) { return s.trim(); }).filter(String),
+    metaAhorro: Number(aj.meta_ahorro) || 0,
+  };
+}
+
+const AJUSTES_EDITABLES = ['meta_ahorro'];
+
+function guardarAjuste(clave, valor) {
+  if (AJUSTES_EDITABLES.indexOf(clave) === -1) throw new Error('Ajuste no editable: ' + clave);
+  fijarAjuste(clave, valor);
+  return infoIA();
+}
+
+function fijarAjuste(clave, valor) {
+  asegurarHojasLecturas();
+  const sh = hoja('Ajustes');
+  const datos = sh.getDataRange().getValues();
+  for (let i = 1; i < datos.length; i++) {
+    if (String(datos[i][0]) === clave) { sh.getRange(i + 1, 2, 1, 1).setValues([[valor]]); return; }
+  }
+  sh.appendRow([clave, valor]);
+}
+
+// --- IA 1: avisos con formato no reconocido ---
+
+/** Si el lector fijo no reconoció el aviso, lo intenta leer la IA. Devuelve el aviso original si no hay IA o falla. */
+function conLectorIA(av, texto, fuente) {
+  if (!av || av.tipo !== 'ignorar' || !/formato/.test(av.motivo || '') || yaRegistrado(av.id)) return av;
+  if (!/informa|banco|tarjeta|transf|monto|\bGs\b|PYG|USD/i.test(String(texto))) return av;
+  const r = geminiSeguro(
+    'Sos un lector de avisos bancarios de Paraguay. Leé este ' + fuente + ' y devolvé SOLO un JSON con: ' +
+    '{"tipo": "compra" | "pago_tarjeta" | "transferencia_enviada" | "transferencia_recibida" | "otro", ' +
+    '"monto": texto con moneda, ej. "Gs 30.000" o "USD 9,99", "comercio": nombre del comercio o persona (vacío si no hay), ' +
+    '"tarjeta": tarjeta o cuenta si aparece, "fecha": "dd/mm/aaaa hh:mm" si aparece, si no ""}. ' +
+    '"pago_tarjeta" es cuando el cliente paga su propia tarjeta de crédito (no es una compra). ' +
+    'Si no es un movimiento de dinero, tipo "otro".\n\nAviso:\n' + String(texto).slice(0, 1200),
+    true, 'lector ' + fuente);
+  if (!r || !r.tipo) return av;
+  const base = { fuente: fuente, id: av.id, texto: av.texto, porIA: true };
+  if (r.tipo === 'compra' && r.monto) {
+    return Object.assign(base, { tipo: 'gasto', gasto: { monto: r.monto, comercio: r.comercio || '', tarjeta: r.tarjeta || '', fecha: fechaDeTexto(r.fecha), origen: fuente } });
+  }
+  if (r.tipo === 'pago_tarjeta' && r.monto) {
+    return Object.assign(base, { tipo: 'pagoTarjeta', pago: { monto: r.monto, tarjeta: r.tarjeta || '', fecha: fechaDeTexto(r.fecha) } });
+  }
+  if (r.tipo === 'transferencia_enviada' && r.monto) {
+    const tr = transferenciaEnviada({ fuente: fuente, texto: av.texto }, av.id, { monto: r.monto, beneficiario: r.comercio || '', fecha: r.fecha || '', banco: r.tarjeta || '' });
+    return Object.assign(tr, { porIA: true });
+  }
+  if (r.tipo === 'transferencia_recibida' && r.monto) {
+    const ing = ingresoRecibido({ fuente: fuente, texto: av.texto }, av.id, { monto: r.monto, pagador: r.comercio || '', fecha: r.fecha || '', banco: r.tarjeta || '' });
+    return Object.assign(ing, { porIA: true });
+  }
+  return Object.assign(av, { motivo: 'no es un movimiento (según IA)' });
+}
+
+// --- IA 2 y 3: nombre unificado y categoría de comercios ---
+
+function claveComercio(comercio) {
+  return normalizar(comercio).replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function nombresCategorias() {
+  return leerConfig().categorias.map(function (c) { return c.nombre; }).filter(function (n) { return n !== POR_REVISAR; });
+}
+
+/** Nombre limpio y categoría de un comercio: primero la hoja Comercios, si no, la IA (y se guarda). */
+function infoComercio(comercio) {
+  const clave = claveComercio(comercio);
+  if (!clave) return null;
+  const sh = SpreadsheetApp.getActive().getSheetByName('Comercios');
+  if (sh) {
+    const fila = leerObjetos('Comercios').filter(function (r) { return String(r.clave) === clave; })[0];
+    if (fila) return { nombre: String(fila.nombre || ''), categoria: String(fila.categoria || '') };
+  }
+  if (!iaDisponible()) return null;
+  const r = clasificarComerciosIA([comercio])[0];
+  if (!r) return null;
+  guardarComercio(clave, r.nombre, r.categoria, 'ia');
+  return r;
+}
+
+/** Pide a la IA nombre limpio + categoría para una lista de comercios. Devuelve [{nombre, categoria}] en el mismo orden. */
+function clasificarComerciosIA(comercios) {
+  const cats = nombresCategorias();
+  const r = geminiSeguro(
+    'Para cada comercio de pagos con tarjeta en Paraguay, devolvé su nombre comercial limpio y su categoría. ' +
+    'Nombre limpio: la marca, sin ciudad, sucursal, país ni códigos (ej. "Hiperseis hypermarket" y "Selfcheckout-S6 Hiper" → "Superseis"; ' +
+    '"BURGER KING-MCAL.LOPEZ ASUNCION" → "Burger King"; "OPENAI *CHATGPT SUBSCR" → "ChatGPT"). ' +
+    'Categoría: una de ' + JSON.stringify(cats) + ' (si no estás seguro, "' + CATEGORIA_DEFECTO + '"). ' +
+    'Devolvé SOLO un JSON: [{"nombre": "...", "categoria": "..."}] en el mismo orden.\n\nComercios:\n' +
+    comercios.map(function (c, i) { return (i + 1) + '. ' + c; }).join('\n'),
+    true, 'comercios');
+  if (!Array.isArray(r)) return [];
+  return comercios.map(function (c, i) {
+    const x = r[i] || {};
+    return { nombre: String(x.nombre || '').trim(), categoria: cats.indexOf(x.categoria) !== -1 ? x.categoria : CATEGORIA_DEFECTO };
+  });
+}
+
+function guardarComercio(clave, nombre, categoria, fuente) {
+  asegurarHojasLecturas();
+  const sh = hoja('Comercios');
+  const datos = sh.getDataRange().getValues();
+  for (let i = 1; i < datos.length; i++) {
+    if (String(datos[i][0]) === clave) { sh.getRange(i + 1, 1, 1, 4).setValues([[clave, nombre, categoria, fuente]]); return; }
+  }
+  sh.appendRow([clave, nombre, categoria, fuente]);
+}
+
+/** Una vez: unifica nombres de comercios ya registrados y categoriza los que estaban en "Otros". */
+function unificarComerciosExistentes() {
+  if (!iaDisponible()) throw new Error('Falta la clave de Gemini en la hoja Ajustes');
+  asegurarHojasLecturas();
+  const sh = hoja('Gastos');
+  const datos = sh.getDataRange().getValues();
+  const c = {};
+  HOJAS.Gastos.forEach(function (k, i) { c[k] = i; });
+  const conocidos = {};
+  leerObjetos('Comercios').forEach(function (r) { conocidos[String(r.clave)] = r; });
+  const nuevos = [];
+  for (let i = 1; i < datos.length; i++) {
+    const com = String(datos[i][c.comercio]);
+    const auto = FUENTES_AUTOMATICAS.indexOf(fuenteDe(datos[i][c.origen])) !== -1;
+    if (!auto || !com || /^Transferencia a /i.test(com)) continue;
+    const k = claveComercio(com);
+    if (k && !conocidos[k] && nuevos.indexOf(com) === -1 && !nuevos.some(function (x) { return claveComercio(x) === k; })) nuevos.push(com);
+  }
+  for (let i = 0; i < nuevos.length; i += 40) {
+    const lote = nuevos.slice(i, i + 40);
+    clasificarComerciosIA(lote).forEach(function (r, j) {
+      if (!r.nombre) return;
+      const k = claveComercio(lote[j]);
+      guardarComercio(k, r.nombre, r.categoria, 'ia');
+      conocidos[k] = { nombre: r.nombre, categoria: r.categoria };
+    });
+  }
+  let cambios = 0;
+  for (let i = 1; i < datos.length; i++) {
+    const f = datos[i];
+    const com = String(f[c.comercio]);
+    const auto = FUENTES_AUTOMATICAS.indexOf(fuenteDe(f[c.origen])) !== -1;
+    const info = auto && conocidos[claveComercio(com)];
+    if (!info) continue;
+    let cambio = false;
+    if (info.nombre && info.nombre !== com) { f[c.comercio] = info.nombre; cambio = true; }
+    if (String(f[c.categoria]) === CATEGORIA_DEFECTO && info.categoria && info.categoria !== CATEGORIA_DEFECTO) { f[c.categoria] = info.categoria; cambio = true; }
+    if (cambio) { sh.getRange(i + 1, 1, 1, HOJAS.Gastos.length).setValues([f]); cambios++; }
+  }
+  return { comerciosNuevos: nuevos.length, gastosActualizados: cambios };
+}
+
+// --- IA 4: sugerencias para "Por revisar" ---
+
+function sugerirPorRevisar() {
+  const gastos = listarGastos('');
+  const pendientes = gastos.filter(function (g) { return g.categoria === POR_REVISAR; }).slice(0, 30);
+  if (!pendientes.length || !iaDisponible()) return [];
+  const nombreDe = function (g) { return String(g.comercio).replace(/^Transferencia a /i, ''); };
+  const items = pendientes.map(function (g) {
+    const n = nombreDe(g);
+    const historial = gastos
+      .filter(function (x) { return x.id !== g.id && x.categoria !== POR_REVISAR && coincideNombre(x.comercio, n.split(' ').slice(0, 2).join(' ')); })
+      .slice(0, 5)
+      .map(function (x) { return x.fecha.slice(0, 10) + ' ' + x.monto + ' ' + x.comercio + ' → ' + x.categoria; });
+    return { id: g.id, destinatario: n, monto: g.monto, fecha: g.fecha, historial: historial };
+  });
+  const r = geminiSeguro(
+    'Estas son transferencias enviadas que el usuario todavía no clasificó. Para cada una sugerí la categoría más probable ' +
+    'usando su historial con esa persona (si no hay historial, usá el monto y el nombre; si no se puede saber, "' + CATEGORIA_DEFECTO + '"). ' +
+    'Categorías válidas: ' + JSON.stringify(nombresCategorias()) + '. ' +
+    'Devolvé SOLO un JSON: [{"id": "...", "categoria": "...", "motivo": "frase corta en español"}].\n\n' + JSON.stringify(items),
+    true, 'sugerencias');
+  if (!Array.isArray(r)) return [];
+  const cats = nombresCategorias();
+  return r.filter(function (x) { return x && x.id && cats.indexOf(x.categoria) !== -1; })
+    .map(function (x) { return { id: String(x.id), categoria: x.categoria, motivo: String(x.motivo || '').slice(0, 140) }; });
+}
+
+// --- IA 5, 6 y 10: preguntas, resumen semanal y consejo del mes ---
+
+/** Datos compactos (sin cuentas ni tokens) para que la IA responda sobre los gastos. */
+function contextoFinanciero(diasDetalle) {
+  const gastos = listarGastos('').filter(function (g) { return g.categoria !== POR_REVISAR; });
+  const ingresos = listarIngresos('');
+  const porMes = {};
+  gastos.forEach(function (g) {
+    const m = g.fecha.slice(0, 7);
+    porMes[m] = porMes[m] || { gastos: {}, ingresos: {} };
+    porMes[m].gastos[g.categoria] = (porMes[m].gastos[g.categoria] || 0) + g.monto;
+  });
+  ingresos.forEach(function (i) {
+    const m = i.fecha.slice(0, 7);
+    porMes[m] = porMes[m] || { gastos: {}, ingresos: {} };
+    porMes[m].ingresos[i.categoria] = (porMes[m].ingresos[i.categoria] || 0) + i.monto;
+  });
+  const desde = Utilities.formatDate(new Date(Date.now() - diasDetalle * 864e5), TZ, 'yyyy-MM-dd');
+  return {
+    hoy: normalizarFecha(''),
+    presupuestos: leerConfig().presupuestos,
+    totalesPorMes: porMes,
+    gastosRecientes: gastos.filter(function (g) { return g.fecha >= desde; }).slice(0, 400)
+      .map(function (g) { return [g.fecha, g.monto, g.comercio, g.categoria]; }),
+    ingresosRecientes: ingresos.filter(function (i) { return i.fecha >= desde; }).slice(0, 300)
+      .map(function (i) { return [i.fecha, i.monto, i.pagador, i.categoria]; }),
+  };
+}
+
+const ESTILO_IA = 'Respondé en español rioplatense, breve y concreto. Montos en guaraníes con punto de miles (ej. Gs 1.250.000). ' +
+  'Usá solo los datos dados; si no alcanzan, decilo.';
+
+function preguntarGastos(pregunta) {
+  if (!pregunta.trim()) throw new Error('Escribí una pregunta');
+  if (!iaDisponible()) throw new Error('La IA no está configurada');
+  return gemini('Sos el asistente de finanzas personales del usuario. ' + ESTILO_IA +
+    '\n\nDatos (gastosRecientes y ingresosRecientes: [fecha, monto, comercio/pagador, categoría]):\n' + JSON.stringify(contextoFinanciero(120)) +
+    '\n\nPregunta: ' + pregunta.slice(0, 500), false);
+}
+
+function consejoMes(mes) {
+  if (!iaDisponible()) throw new Error('La IA no está configurada');
+  const meta = Number(ajustes().meta_ahorro) || 0;
+  return gemini('Sos un coach de finanzas personales. ' + ESTILO_IA +
+    ' Mes: ' + (mes || normalizarFecha('').slice(0, 7)) + '. Meta de ahorro mensual: Gs ' + formatearGs(meta) + '. ' +
+    'Decí cómo viene el mes (ingresos, gastos, ahorro proyectado), cuánto puede gastar por día hasta fin de mes para cumplir la meta, ' +
+    'y 2 o 3 recomendaciones puntuales basadas en sus categorías y comercios. Máximo 8 líneas.\n\nDatos:\n' + JSON.stringify(contextoFinanciero(45)), false);
+}
+
+/** Lunes 8 AM: resumen de la semana por IA, guardado en Ajustes (lo muestra la app) y enviado por mail al titular. */
+function resumenSemanal(forzar) {
+  if (!iaDisponible()) return null;
+  const texto = geminiSeguro('Escribí el resumen semanal de finanzas del usuario. ' + ESTILO_IA +
+    ' Incluí: cuánto gastó en los últimos 7 días vs. su promedio semanal, las categorías que más subieron, ' +
+    'las suscripciones cobradas, cómo vienen los ingresos (sueldo y ventas) y un consejo para la semana. Máximo 10 líneas, con viñetas.' +
+    '\n\nDatos:\n' + JSON.stringify(contextoFinanciero(35)), false, 'resumen semanal');
+  if (!texto) return null;
+  const resumen = { fecha: normalizarFecha(''), texto: texto };
+  fijarAjuste('resumen_semanal', JSON.stringify(resumen));
+  if (!forzar) {
+    try {
+      GmailApp.sendEmail(Session.getEffectiveUser().getEmail(), 'Gastos · resumen de la semana', texto);
+    } catch (err) { registrar('ia', 'mail-' + Date.now(), 'error: ' + err.message, 'envío del resumen'); }
+  }
+  return resumen;
+}
+
+/** Ejecutar una vez (tras pegar gemini_key en Ajustes): activador del resumen y unificación de comercios. */
+function instalarIA() {
+  asegurarHojasLecturas();
+  const aj = ajustes();
+  if (aj.gemini_modelo === undefined) fijarAjuste('gemini_modelo', IA_MODELO_DEFECTO);
+  if (aj.gemini_key === undefined) fijarAjuste('gemini_key', '');
+  if (aj.consultar_siempre === undefined) fijarAjuste('consultar_siempre', '');
+  if (aj.meta_ahorro === undefined) fijarAjuste('meta_ahorro', 0);
+  ScriptApp.getProjectTriggers()
+    .filter(function (t) { return t.getHandlerFunction() === 'resumenSemanal'; })
+    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('resumenSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).inTimezone(TZ).create();
+  // Prueba de conexión (pide el permiso de servicios externos aunque todavía no haya clave).
+  UrlFetchApp.fetch('https://generativelanguage.googleapis.com/', { muteHttpExceptions: true });
+  if (iaDisponible()) Logger.log(JSON.stringify(unificarComerciosExistentes()));
 }
 
 // ---------- Estado del sistema ----------
