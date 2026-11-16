@@ -37,8 +37,8 @@ const ICONOS = {
 };
 const POR_REVISAR = 'Por revisar';
 const CATS_INGRESO = ['Sueldo', 'Ventas'];
-/** Lo que está "Por revisar" no suma a los gastos hasta que lo confirmes. */
-const contable = (g) => g.categoria !== POR_REVISAR;
+/** Lo que está "Por revisar" no suma hasta que lo confirmes; lo pagado por otro (tercero) nunca suma. */
+const contable = (g) => g.categoria !== POR_REVISAR && !g.tercero;
 const SIN_CATEGORIA_TOP = 5; // en la dona: 5 categorías + "Otras"
 
 const $ = (sel) => document.querySelector(sel);
@@ -60,6 +60,7 @@ const state = {
   sincronizando: false,
   ultimoError: '',
   filtroCat: '',
+  filtroEtiqueta: '', // Movimientos: viaje/evento elegido (mira todos los meses) o "__tercero"
   busqueda: '',
   recienGuardado: '',
   ingresos: [],      // ingresos según el servidor (o caché)
@@ -519,7 +520,7 @@ function renderInicio() {
   const dups = posiblesDuplicados(delMes(conRevisar, mes));
   $('#alertaDup').hidden = !dups.length;
   $('#alertaDupTit').textContent = dups.length === 1 ? '1 posible gasto duplicado' : `${dups.length} posibles gastos duplicados`;
-  const revisar = conRevisar.length - todos.length;
+  const revisar = conRevisar.filter((g) => g.categoria === POR_REVISAR).length;
   $('#alertaRevisar').hidden = !revisar;
   $('#alertaRevisarTit').textContent = revisar === 1 ? '1 transferencia por revisar' : `${revisar} transferencias por revisar`;
   renderAlertaSistema();
@@ -585,6 +586,11 @@ function renderInicio() {
 
   // Dona por categoría
   renderDona(totalesPorCategoria(actuales), total);
+
+  // Vs mes anterior, por categoría (mes en curso: contra el mismo tramo de días del mes anterior)
+  renderComparacion(totalesPorCategoria(actuales),
+    totalesPorCategoria(esActual ? anteriores.filter((g) => Number(g.fecha.slice(8, 10)) <= transcurridos) : anteriores),
+    esActual ? `al día ${transcurridos}` : '', previo);
 
   // Últimos 6 meses
   const meses = Array.from({ length: 6 }, (_, i) => moverMes(mes, i - 5));
@@ -881,7 +887,9 @@ function filaMovimiento(g, { dudosos, accion } = {}) {
     el('div', { class: 'info' },
       el('div', { class: 'com' }, nombreBonito(g.comercio) || 'Sin comercio',
         dudosos?.has(g.id) ? el('span', { class: 'tag-dup' }, '¿duplicado?') : null,
-        g.categoria === POR_REVISAR ? el('span', { class: 'tag-dup' }, 'por revisar') : null),
+        g.categoria === POR_REVISAR ? el('span', { class: 'tag-dup' }, 'por revisar') : null,
+        g.etiqueta ? el('span', { class: 'tag-etq' }, '🏷️ ' + g.etiqueta) : null,
+        g.tercero ? el('span', { class: 'tag-tercero' }, 'de ' + g.tercero) : null),
       el('div', { class: 'meta' }, meta.filter(Boolean).join(' · ')),
     ),
     accion || el('div', { class: 'monto' }, gs(g.monto), g.pendiente ? el('small', {}, 'pendiente') : null),
@@ -911,7 +919,11 @@ function renderMovimientos() {
   $('#gastosVista').hidden = state.modoMov !== 'gastos';
   $('#ingresosVista').hidden = state.modoMov !== 'ingresos';
   if (state.modoMov === 'ingresos') return renderIngresos();
-  const delMesActual = delMes(gastosTodos(), state.mes);
+  const fe = state.filtroEtiqueta;
+  const delMesActual = fe === '__tercero' ? delMes(gastosTodos(), state.mes).filter((g) => g.tercero)
+    : fe ? gastosTodos().filter((g) => g.etiqueta === fe) // un viaje puede abarcar varios meses
+    : delMes(gastosTodos(), state.mes);
+  renderFiltrosEtiqueta();
   const cats = totalesPorCategoria(delMesActual).map((c) => c.categoria);
   if (state.filtroCat && !cats.includes(state.filtroCat)) cats.unshift(state.filtroCat);
 
@@ -928,7 +940,7 @@ function renderMovimientos() {
     (!q || normalizar(`${g.comercio} ${g.tarjeta} ${g.categoria} ${g.origen}`).includes(q)));
 
   $('#movCant').textContent = `${lista.length} movimiento${lista.length === 1 ? '' : 's'}`;
-  $('#movTotal').textContent = gs(suma(lista.filter(contable)));
+  $('#movTotal').textContent = fe === '__tercero' ? `Te deben ${gs(suma(lista))}` : gs(suma(lista.filter(contable)));
 
   const cont = $('#listaMov');
   cont.replaceChildren();
@@ -944,11 +956,52 @@ function renderMovimientos() {
     const [a, m, d] = dia.split('-').map(Number);
     const etiqueta = dia === hoy ? 'Hoy' : dia === ayer ? 'Ayer' : new Date(a, m - 1, d).toLocaleDateString('es-PY', { weekday: 'long', day: 'numeric', month: 'short' });
     cont.append(el('div', { class: 'grupo-dia' },
-      el('div', { class: 'cab-dia' }, el('span', {}, etiqueta), el('span', {}, gs(suma(gastos)))),
+      el('div', { class: 'cab-dia' }, el('span', {}, etiqueta), el('span', {}, gs(suma(fe === '__tercero' ? gastos : gastos.filter(contable))))),
       el('ul', { class: 'mov-lista' }, gastos.map((g) => filaMovimiento(g, { dudosos }))),
     ));
   }
   $('#vacioMov').hidden = lista.length > 0;
+}
+
+/** Chips de viajes/eventos y de "pagado por otros" arriba de los filtros de categoría. */
+function renderFiltrosEtiqueta() {
+  const todos = gastosTodos();
+  const etiquetas = new Map();
+  for (const g of todos) if (g.etiqueta) etiquetas.set(g.etiqueta, (etiquetas.get(g.etiqueta) || 0) + (contable(g) ? g.monto : 0));
+  const terceroMes = delMes(todos, state.mes).some((g) => g.tercero);
+  const fe = state.filtroEtiqueta;
+  const chip = (valor, texto) => el('button', {
+    class: 'chip chip-etq' + (fe === valor ? ' activo' : ''),
+    onclick: () => { state.filtroEtiqueta = fe === valor ? '' : valor; state.filtroCat = ''; vibrar(5); renderMovimientos(); },
+  }, texto);
+  const chips = [...etiquetas].sort((a, b) => b[1] - a[1]).map(([t, total]) => chip(t, `🏷️ ${t} · ${corto(total)}`));
+  if (terceroMes || fe === '__tercero') chips.push(chip('__tercero', '🤝 Pagado por otros'));
+  $('#filtrosEtq').replaceChildren(...chips);
+  $('#filtrosEtq').hidden = !chips.length;
+}
+
+/** Comparación por categoría contra el mes anterior: qué subió y qué bajó. */
+function renderComparacion(ahora, antes, nota, previo) {
+  const mapa = new Map();
+  for (const c of ahora) mapa.set(c.categoria, { cat: c.categoria, a: c.total, b: 0 });
+  for (const c of antes) { const x = mapa.get(c.categoria) || { cat: c.categoria, a: 0, b: 0 }; x.b = c.total; mapa.set(c.categoria, x); }
+  const filas = [...mapa.values()].map((x) => ({ ...x, d: x.a - x.b })).filter((x) => x.d !== 0)
+    .sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 6);
+  $('#compNota').textContent = `vs ${nombreMes(previo, false).toLowerCase()}${nota ? ' ' + nota : ''}`;
+  const max = Math.max(1, ...filas.map((x) => Math.abs(x.d)));
+  $('#listaComp').replaceChildren(...filas.map((x) => {
+    const sube = x.d > 0;
+    const pct = x.b ? Math.round((x.d / x.b) * 100) : null;
+    return el('li', { class: 'comp-fila' },
+      el('span', { class: 'ico', style: fondoIcono(colorDe(x.cat)) }, iconoDe(x.cat)),
+      el('div', { class: 'comp-info' },
+        el('div', { class: 'comp-cab' }, el('span', {}, x.cat),
+          el('b', { class: sube ? 'sube' : 'baja' }, `${sube ? '↑' : '↓'} ${gs(Math.abs(x.d))}`)),
+        el('div', { class: 'comp-barra' }, el('i', { class: sube ? 'sube' : 'baja', style: `width:${(Math.abs(x.d) / max) * 100}%` })),
+        el('div', { class: 'meta' }, `${gs(x.a)} ahora · ${gs(x.b)} antes${pct === null ? ' · nuevo' : ` · ${pct > 0 ? '+' : ''}${pct}%`}`)),
+    );
+  }));
+  $('#vacioComp').hidden = filas.length > 0;
 }
 
 // ---------- Coach, IA y suscripciones ----------
@@ -1427,7 +1480,12 @@ function abrirGasto(g = null) {
   $('#fComercio').value = g?.comercio || '';
   $('#fTarjeta').value = g ? g.tarjeta : (localStorageGet('ultimaTarjeta') || '');
   $('#fFecha').value = g ? g.fecha.replace(' ', 'T') : (state.mes === mesActual() ? ahoraLocal() : state.mes + '-01T12:00');
+  $('#fEtiqueta').value = g?.etiqueta || '';
+  $('#fTercero').value = g?.tercero || '';
   $('#btnBorrar').hidden = !g;
+  const unicos = (k) => [...new Set(gastosTodos().map((x) => x[k]).filter(Boolean))];
+  $('#etiquetas').replaceChildren(...unicos('etiqueta').map((t) => el('option', { value: t })));
+  $('#terceros').replaceChildren(...unicos('tercero').map((t) => el('option', { value: t })));
   const tarjetas = [...new Set(gastosTodos().map((x) => x.tarjeta).filter(Boolean))];
   $('#tarjetas').replaceChildren(...tarjetas.map((t) => el('option', { value: t })));
   pintarMonto();
@@ -1498,6 +1556,8 @@ $('#formGasto').addEventListener('submit', async (ev) => {
     tarjeta: $('#fTarjeta').value.trim(),
     categoria: form.manual ? form.categoria : categorizar(comercio),
     origen: g?.origen || 'manual',
+    etiqueta: $('#fEtiqueta').value.trim(),
+    tercero: $('#fTercero').value.trim(),
   };
   const parecido = !g && gastoParecido(gasto);
   if (parecido && !confirm(`Ya hay un gasto de ${gs(parecido.monto)} en ${nombreBonito(parecido.comercio) || 'sin comercio'} a las ${parecido.fecha.slice(11, 16)}` +
@@ -1510,7 +1570,7 @@ $('#formGasto').addEventListener('submit', async (ev) => {
   cerrarHoja($('#hoja'));
   vibrar(12);
   await encolar({ accion: 'guardar', gasto });
-  toast(`${g ? 'Actualizado' : 'Guardado'}: ${gs(monto)} · ${gasto.categoria}`);
+  toast(`${g ? 'Actualizado' : 'Guardado'}: ${gs(monto)} · ${gasto.tercero ? 'pagado por ' + gasto.tercero + ' (no suma)' : gasto.categoria}`);
   if (aprender) abrirRegla(gasto);
   if (!gasto.fecha.startsWith(state.mes)) { state.mes = gasto.fecha.slice(0, 7); render(); }
 });
@@ -1680,7 +1740,7 @@ $('#btnDiscreto').addEventListener('click', () => {
 // ---------- CSV ----------
 
 function aCsv(gastos) {
-  const cols = ['fecha', 'monto', 'comercio', 'tarjeta', 'categoria', 'origen'];
+  const cols = ['fecha', 'monto', 'comercio', 'tarjeta', 'categoria', 'origen', 'etiqueta', 'tercero'];
   const escCsv = (v) => {
     const s = String(v ?? '');
     return /[";\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;

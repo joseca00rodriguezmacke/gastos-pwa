@@ -130,6 +130,12 @@
         </div>
       </article>
 
+      <article class="card" id="cardComp">
+        <div class="card-cab"><h2>Vs mes anterior</h2><span class="sub" id="compNota"></span></div>
+        <ul id="listaComp" class="comp-lista"></ul>
+        <p id="vacioComp" class="vacio-grafico" hidden>Sin cambios por categoría todavía.</p>
+      </article>
+
       <article class="card">
         <div class="card-cab"><h2>Últimos 6 meses</h2><span class="sub" id="promedio6"></span></div>
         <div id="graficoMeses" class="grafico-caja"></div>
@@ -169,6 +175,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
         <input id="buscar" type="search" placeholder="Buscar comercio, tarjeta…" autocomplete="off" enterkeyhint="search">
       </div>
+      <div id="filtrosEtq" class="chips" hidden></div>
       <div id="filtros" class="chips"></div>
       <div class="resumen-mov"><span id="movCant"></span><b id="movTotal"></b></div>
       <div id="listaMov"></div>
@@ -294,6 +301,8 @@
       <div class="detalles">
         <label><span>Tarjeta</span><input id="fTarjeta" list="tarjetas" placeholder="Opcional"><datalist id="tarjetas"></datalist></label>
         <label><span>Fecha</span><input id="fFecha" type="datetime-local" required></label>
+        <label><span>Viaje o evento</span><input id="fEtiqueta" list="etiquetas" placeholder="Opcional · Ej: Miami 2026" autocomplete="off"><datalist id="etiquetas"></datalist></label>
+        <label><span>Lo pagué por</span><input id="fTercero" list="terceros" placeholder="Nadie, es mío" autocomplete="off"><datalist id="terceros"></datalist></label>
       </div>
       <div class="teclado" id="teclado">
         <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button>

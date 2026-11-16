@@ -23,7 +23,8 @@
 const TZ = 'America/Asuncion';
 
 const HOJAS = {
-  Gastos: ['fecha', 'monto', 'comercio', 'tarjeta', 'categoria', 'origen', 'id'],
+  // etiqueta: viaje o evento ("Miami 2026"); tercero: quién lo debe si lo pagaste por otro (no suma a tus gastos)
+  Gastos: ['fecha', 'monto', 'comercio', 'tarjeta', 'categoria', 'origen', 'id', 'etiqueta', 'tercero'],
   Categorias: ['nombre', 'color'],
   Reglas: ['patron', 'categoria'],
   Presupuestos: ['categoria', 'monto'],
@@ -211,6 +212,8 @@ function guardarGasto(g, soloSiNuevo) {
     origen: origen,
     // Con "momento" el id sale del contenido: reenviar el mismo gasto lo actualiza en vez de duplicarlo.
     id: String(g.id || (momento ? 'sc-' + resumenHex(momento + '|' + monto + '|' + comercio + '|' + tarjeta) : Utilities.getUuid())),
+    etiqueta: String(g.etiqueta || '').trim(),
+    tercero: String(g.tercero || '').trim(),
   };
   // Comercio de un aviso automático: nombre unificado y, si ninguna regla lo clasificó, categoría sugerida por IA.
   if (!String(g.categoria || '').trim() && FUENTES_AUTOMATICAS.indexOf(fuenteDe(origen)) !== -1 && comercio && !/^Transferencia a /i.test(comercio)) {
@@ -224,7 +227,14 @@ function guardarGasto(g, soloSiNuevo) {
     }
   }
   const sh = hoja('Gastos');
+  asegurarColumnasGastos(sh);
   const n = buscarFilaPorId(sh, gasto.id);
+  if (n && (g.etiqueta === undefined || g.tercero === undefined)) {
+    // Un reenvío automático no trae etiqueta ni tercero: se conservan los que ya tenía.
+    const previo = leerObjetos('Gastos')[n - 2] || {};
+    if (g.etiqueta === undefined) gasto.etiqueta = String(previo.etiqueta || '');
+    if (g.tercero === undefined) gasto.tercero = String(previo.tercero || '');
+  }
   if (n && soloSiNuevo) {
     const previo = leerObjetos('Gastos')[n - 2];
     previo.fecha = textoFecha(previo.fecha);
@@ -294,6 +304,8 @@ function fusionarConExistente(sh, nuevo) {
     categoria: String(f[c.categoria]) || nuevo.categoria,
     origen: partes.concat(nota.filter(function (x) { return partes.indexOf(x) === -1; })).join(' · '),
     id: String(f[c.id]),
+    etiqueta: String(f[c.etiqueta] || ''),
+    tercero: String(f[c.tercero] || ''),
   };
   sh.getRange(mejor + 1, 1, 1, HOJAS.Gastos.length).setValues([HOJAS.Gastos.map(function (k) { return fusionado[k]; })]);
   fusionado.fusionado = true;
@@ -366,6 +378,8 @@ function listarGastos(mes) {
       g.fecha = g.fecha instanceof Date ? Utilities.formatDate(g.fecha, TZ, 'yyyy-MM-dd HH:mm') : String(g.fecha);
       g.monto = Number(g.monto) || 0;
       g.id = String(g.id);
+      g.etiqueta = String(g.etiqueta || '');
+      g.tercero = String(g.tercero || '');
       return g;
     })
     .filter(function (g) { return g.id && g.fecha.indexOf(mes) === 0; })
@@ -380,6 +394,14 @@ function buscarFilaPorId(sh, id) {
     if (String(datos[i][col]) === id) return i + 1;
   }
   return 0;
+}
+
+/** Agrega al encabezado de Gastos las columnas nuevas (etiqueta, tercero) si la hoja es anterior. */
+function asegurarColumnasGastos(sh) {
+  sh = sh || hoja('Gastos');
+  const n = HOJAS.Gastos.length;
+  if (sh.getLastColumn() >= n) return;
+  sh.getRange(1, 1, 1, n).setValues([HOJAS.Gastos]);
 }
 
 // ---------- Configuración ----------
@@ -655,7 +677,7 @@ function aplicarReglasDestinatarios() {
     if (d.ignorar) { sh.deleteRow(i + 1); cambios++; continue; }
     f[c.categoria] = d.categoria;
     f[c.comercio] = d.etiqueta;
-    sh.getRange(i + 1, 1, 1, HOJAS.Gastos.length).setValues([f]);
+    sh.getRange(i + 1, 1, 1, f.length).setValues([f]);
     cambios++;
   }
   return cambios;
@@ -1162,7 +1184,7 @@ function unificarComerciosExistentes() {
     let cambio = false;
     if (info.nombre && info.nombre !== com) { f[c.comercio] = info.nombre; cambio = true; }
     if (String(f[c.categoria]) === CATEGORIA_DEFECTO && info.categoria && info.categoria !== CATEGORIA_DEFECTO) { f[c.categoria] = info.categoria; cambio = true; }
-    if (cambio) { sh.getRange(i + 1, 1, 1, HOJAS.Gastos.length).setValues([f]); cambios++; }
+    if (cambio) { sh.getRange(i + 1, 1, 1, f.length).setValues([f]); cambios++; }
   }
   return { comerciosNuevos: nuevos.length, gastosActualizados: cambios };
 }
@@ -1198,7 +1220,7 @@ function sugerirPorRevisar() {
 
 /** Datos compactos (sin cuentas ni tokens) para que la IA responda sobre los gastos. */
 function contextoFinanciero(diasDetalle) {
-  const gastos = listarGastos('').filter(function (g) { return g.categoria !== POR_REVISAR; });
+  const gastos = listarGastos('').filter(function (g) { return g.categoria !== POR_REVISAR && !g.tercero; });
   const ingresos = listarIngresos('');
   const porMes = {};
   gastos.forEach(function (g) {
