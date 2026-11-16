@@ -225,6 +225,7 @@ function guardarGasto(g, soloSiNuevo) {
 const FUENTES_AUTOMATICAS = ['applepay', 'sms', 'mail'];
 const VENTANA_FUSION_MIN = 30;
 const VENTANA_FUSION_SIN_COMERCIO_MIN = 5;
+const VENTANA_FUSION_MANUAL_MIN = 180; // un gasto cargado a mano + el aviso automático del mismo pago
 
 /**
  * El mismo pago puede llegar por Apple Pay, SMS y mail. Si ya hay uno de otra fuente con el mismo
@@ -241,12 +242,15 @@ function fusionarConExistente(sh, nuevo) {
   let mejorDif = Infinity;
   for (let i = 1; i < datos.length; i++) {
     const f = datos[i];
-    if (Number(f[c.monto]) !== nuevo.monto) continue;
     const origen = String(f[c.origen]);
     const fuentes = origen.split(' · ')[0].split('+');
-    if (fuentes.indexOf(fuente) !== -1 || fuentes.indexOf('manual') !== -1) continue;
+    if (fuentes.indexOf(fuente) !== -1) continue;
+    const esManual = fuentes.indexOf('manual') !== -1;
+    // Lo cargado a mano suele tener otro nombre y otra hora (se carga después), y a veces difiere en 1 Gs.
+    if (esManual ? Math.abs(Number(f[c.monto]) - nuevo.monto) > 1 : Number(f[c.monto]) !== nuevo.monto) continue;
     const dif = Math.abs(minutosDe(textoFecha(f[c.fecha])) - t);
-    const ventana = mismoComercio(f[c.comercio], nuevo.comercio) ? VENTANA_FUSION_MIN : VENTANA_FUSION_SIN_COMERCIO_MIN;
+    const ventana = esManual ? VENTANA_FUSION_MANUAL_MIN
+      : mismoComercio(f[c.comercio], nuevo.comercio) ? VENTANA_FUSION_MIN : VENTANA_FUSION_SIN_COMERCIO_MIN;
     if (dif <= ventana && dif < mejorDif) { mejor = i; mejorDif = dif; }
   }
   if (!mejor) return null;

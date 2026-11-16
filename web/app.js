@@ -405,7 +405,19 @@ function ignorarDup(clave) {
   localStorageSet('dupIgnorados', JSON.stringify([...s]));
 }
 
-/** Pares con el mismo monto y comercio parecido a pocos minutos de diferencia. */
+// Lo cargado a mano suele llevar otro nombre ("Tirze" vs "Transferencia a Marcela") y cargarse horas después.
+const VENTANA_DUP_MANUAL_MIN = 180;
+const esManual = (g) => (g.origen || 'manual').split(' · ')[0].split('+').includes('manual');
+const montoIgual = (a, b) => Math.abs(a - b) <= 1;
+
+function pareceDuplicado(a, b) {
+  if (!montoIgual(a.monto, b.monto)) return false;
+  const dif = Math.abs(minutos(a.fecha) - minutos(b.fecha));
+  if (dif <= VENTANA_DUP_MIN && mismoComercio(a.comercio, b.comercio)) return true;
+  return esManual(a) !== esManual(b) && dif <= VENTANA_DUP_MANUAL_MIN;
+}
+
+/** Pares que parecen el mismo pago registrado dos veces. */
 function posiblesDuplicados(gastos) {
   const ignorados = ignoradosDup();
   const orden = [...gastos].sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -414,18 +426,16 @@ function posiblesDuplicados(gastos) {
     for (let j = i + 1; j < orden.length; j++) {
       const a = orden[i];
       const b = orden[j];
-      if (minutos(b.fecha) - minutos(a.fecha) > VENTANA_DUP_MIN) break;
-      if (a.monto === b.monto && mismoComercio(a.comercio, b.comercio) && !ignorados.has(clavePar(a, b))) pares.push([a, b]);
+      if (minutos(b.fecha) - minutos(a.fecha) > VENTANA_DUP_MANUAL_MIN) break;
+      if (pareceDuplicado(a, b) && !ignorados.has(clavePar(a, b))) pares.push([a, b]);
     }
   }
   return pares;
 }
 
-/** Gasto ya registrado que parece el mismo que se está por guardar (para avisar antes). */
+/** Gasto ya registrado que parece el mismo que se está por guardar a mano (para avisar antes). */
 function gastoParecido(nuevo) {
-  const t = minutos(nuevo.fecha);
-  return gastosTodos().find((g) => g.id !== nuevo.id && g.monto === nuevo.monto &&
-    Math.abs(minutos(g.fecha) - t) <= VENTANA_DUP_MIN * 1.5 && mismoComercio(g.comercio, nuevo.comercio));
+  return gastosTodos().find((g) => g.id !== nuevo.id && pareceDuplicado({ ...nuevo, origen: 'manual' }, g));
 }
 
 const presupuestoDe = (cat) => Number(state.config.presupuestos.find((p) => p.categoria === cat)?.monto) || 0;
