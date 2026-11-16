@@ -59,6 +59,16 @@
         <span class="alerta-txt"><b id="alertaSistemaTit"></b><small id="alertaSistemaSub"></small></span>
         <span class="alerta-cta">Ver</span>
       </button>
+      <button id="alertaSueldo" class="alerta alerta-sueldo" type="button" hidden>
+        <span class="alerta-ico">💼</span>
+        <span class="alerta-txt"><b id="alertaSueldoTit">¿Cobraste la quincena?</b><small id="alertaSueldoSub">GNB no avisa el depósito de SERCON: confirmalo con un toque.</small></span>
+        <span class="alerta-acciones"><span class="alerta-cta">Sí, cobré</span><span class="alerta-no" id="alertaSueldoNo" role="button" tabindex="0">Todavía no</span></span>
+      </button>
+      <button id="alertaSusc" class="alerta" type="button" hidden>
+        <span class="alerta-ico">📺</span>
+        <span class="alerta-txt"><b id="alertaSuscTit"></b><small>Un cobro que se repite todos los meses y no está en Suscripciones.</small></span>
+        <span class="alerta-cta">Ver</span>
+      </button>
       <article class="hero" id="hero">
         <div class="hero-cab">
           <span id="heroEtiqueta">Gastado este mes</span>
@@ -92,6 +102,7 @@
       <article class="card" id="cardCoach">
         <div class="card-cab"><h2>🎯 Coach del mes</h2><button class="link" id="btnMeta" type="button">Meta: <span id="metaTxt">definir</span></button></div>
         <p id="coachTxt" class="coach-txt"></p>
+        <p id="pronosticoTxt" class="coach-txt pronostico" hidden></p>
         <button class="btn ancho ia-btn" id="btnConsejo" type="button" hidden>✨ Pedir consejo a la IA</button>
         <div id="consejoTxt" class="ia-respuesta" hidden></div>
       </article>
@@ -109,6 +120,16 @@
         </form>
         <div class="chips" id="ejemplosPregunta"></div>
         <div id="respuestaTxt" class="ia-respuesta" hidden></div>
+      </article>
+
+      <article class="card" id="cardSimular" hidden>
+        <h2>🔮 ¿Y si…?</h2>
+        <form id="formSimular" class="pregunta">
+          <input id="fEscenario" placeholder="Ej: ¿y si dejo de pedir delivery?" autocomplete="off" enterkeyhint="send">
+          <button class="btn primario" type="submit">Simular</button>
+        </form>
+        <div class="chips" id="ejemplosSimular"></div>
+        <div id="simulaTxt" class="ia-respuesta" hidden></div>
       </article>
 
       <article class="card">
@@ -134,6 +155,8 @@
         <div class="card-cab"><h2>Vs mes anterior</h2><span class="sub" id="compNota"></span></div>
         <ul id="listaComp" class="comp-lista"></ul>
         <p id="vacioComp" class="vacio-grafico" hidden>Sin cambios por categoría todavía.</p>
+        <button class="btn ancho ia-btn" id="btnExplicar" type="button" hidden>✨ ¿Por qué?</button>
+        <div id="explicaTxt" class="ia-respuesta" hidden></div>
       </article>
 
       <article class="card">
@@ -200,6 +223,7 @@
       </article>
       <article class="card" id="cardSuscripciones">
         <div class="card-cab"><h2>📺 Suscripciones</h2><span class="sub" id="suscTotal"></span></div>
+        <div id="suscNuevas" class="susc-nuevas" hidden></div>
         <ul id="listaSusc" class="top-lista"></ul>
       </article>
       <p class="ayuda">Tocá una categoría para ponerle o cambiarle el límite mensual.</p>

@@ -68,6 +68,7 @@ const state = {
   ia: { disponible: false, resumen: null, consultarSiempre: [], metaAhorro: 0 }, // funciones de IA del servidor
   discreto: false,   // modo discreto: oculta los montos
   estadoSis: null,   // último estado del sistema traído del servidor
+  suscNuevas: [],    // posibles suscripciones nuevas detectadas por el servidor (IA)
 };
 
 // ---------- Almacenamiento local (IndexedDB con respaldo en memoria) ----------
@@ -314,6 +315,7 @@ async function sincronizar() {
     state.cola = await store.cola();
     await cargarDelServidor();
     state.ultimoError = '';
+    cargarSuscNuevas();
   } catch (err) {
     state.ultimoError = err.message === 'Failed to fetch' || err.name === 'TypeError' ? 'Sin conexión con el servidor' : err.message;
   } finally {
@@ -564,9 +566,11 @@ function renderInicio() {
     barra.parentElement.hidden = true;
     $('#heroPresTxt').textContent = 'Sin presupuesto definido';
   }
-  $('#heroProy').textContent = esActual && transcurridos >= 3 && total
-    ? `Proyección ${corto((total / transcurridos) * dias)}`
-    : esActual ? '' : 'Mes cerrado';
+  const prono = esActual && transcurridos >= 3 && total ? pronostico(todos, mes) : null;
+  $('#heroProy').textContent = prono ? `Pronóstico ${corto(prono.total)}` : esActual ? '' : 'Mes cerrado';
+  renderPronostico(prono, suma(delMes(ingresos, mes)));
+  renderAlertaSueldo(ingresos);
+  renderAlertaSusc();
 
   // KPIs
   $('#kpiDiario').textContent = transcurridos ? corto(total / transcurridos) : '—';
@@ -1062,12 +1066,18 @@ async function pedirIA(cuerpo, destino) {
   }
 }
 
+const EJEMPLOS_SIMULAR = ['¿Y si dejo de pedir delivery?', '¿Y si gasto la mitad en restaurantes?', '¿Y si cancelo Netflix y Spotify?', '¿Y si cargo combustible una vez menos por semana?'];
 const EJEMPLOS_PREGUNTA = ['¿Cuánto gasté en restaurantes este mes?', '¿Qué cliente me pagó más?', '¿En qué gasté más que el mes pasado?', '¿Cuánto pago de suscripciones?'];
 
 function renderTarjetasIA() {
   const ia = state.ia || {};
   $('#btnConsejo').hidden = !ia.disponible;
   $('#cardPreguntar').hidden = !ia.disponible;
+  $('#cardSimular').hidden = !ia.disponible;
+  $('#btnExplicar').hidden = !ia.disponible;
+  if (!$('#ejemplosSimular').children.length) {
+    $('#ejemplosSimular').replaceChildren(...EJEMPLOS_SIMULAR.map((p) => el('button', { type: 'button', class: 'chip', onclick: () => { $('#fEscenario').value = p; $('#formSimular').requestSubmit(); } }, p)));
+  }
   const r = ia.resumen;
   $('#cardResumen').hidden = !(ia.disponible && r && r.texto);
   if (r && r.texto) {
@@ -1079,6 +1089,12 @@ function renderTarjetasIA() {
   }
 }
 $('#btnConsejo').addEventListener('click', () => pedirIA({ accion: 'consejo', mes: state.mes }, $('#consejoTxt')));
+$('#btnExplicar').addEventListener('click', () => pedirIA({ accion: 'explicar', mes: state.mes }, $('#explicaTxt')));
+$('#formSimular').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const escenario = $('#fEscenario').value.trim();
+  if (escenario) pedirIA({ accion: 'simular', escenario }, $('#simulaTxt'));
+});
 $('#formPregunta').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const pregunta = $('#fPregunta').value.trim();
@@ -1104,6 +1120,7 @@ function renderSuscripciones() {
     return { ...x, ultimo, sube };
   }).sort((a, b) => b.ultimo.monto - a.ultimo.monto);
   $('#suscTotal').textContent = filas.length ? `≈ ${gs(suma(filas.map((f) => f.ultimo)))} por mes` : '';
+  renderSuscNuevas();
   const ul = $('#listaSusc');
   if (!filas.length) { ul.replaceChildren(el('li', { class: 'vacio-grafico', style: 'display:block' }, 'Sin suscripciones en los últimos meses.')); return; }
   ul.replaceChildren(...filas.map((f) => el('li', {},
@@ -1113,6 +1130,150 @@ function renderSuscripciones() {
     el('div', { class: 'der' }, el('b', {}, gs(f.ultimo.monto)), el('small', {}, `${f.cobros.length} cobro${f.cobros.length === 1 ? '' : 's'}`)),
   )));
 }
+
+// ---------- Pronóstico, suscripciones nuevas y quincena ----------
+
+const GASTO_PUNTUAL = 1000000; // un gasto así de grande no marca el ritmo diario (préstamos, compras grandes)
+const claveMarca = (comercio) => normalizar(nombreBonito(comercio).split(/[\s*]/).filter((w) => w.length > 1)[0] || comercio);
+
+/** Pronóstico a fin de mes: lo gastado + ritmo diario de lo variable + suscripciones del mes pasado que todavía no se cobraron. */
+function pronostico(todos, mes) {
+  const actuales = delMes(todos, mes);
+  const dias = diasDelMes(mes);
+  const hechos = diasTranscurridos(mes);
+  const total = suma(actuales);
+  const variable = actuales.filter((g) => g.categoria !== 'Suscripciones' && g.monto < GASTO_PUNTUAL);
+  const ritmo = hechos ? suma(variable) / hechos : 0;
+  const cobradas = new Set(actuales.filter((g) => g.categoria === 'Suscripciones').map((g) => claveMarca(g.comercio)));
+  const pendientes = new Map();
+  for (const g of delMes(todos, moverMes(mes, -1))) {
+    const k = claveMarca(g.comercio);
+    if (g.categoria === 'Suscripciones' && !cobradas.has(k) && !pendientes.has(k)) pendientes.set(k, g);
+  }
+  const fijos = [...pendientes.values()];
+  const restantes = Math.max(0, dias - hechos);
+  return { total: total + ritmo * restantes + suma(fijos), ritmo, restantes, fijos };
+}
+
+function renderPronostico(p, ingresosMes) {
+  const caja = $('#pronosticoTxt');
+  caja.hidden = !p;
+  if (!p) return;
+  caja.innerHTML = '';
+  caja.append('📈 Pronóstico a fin de mes: ', el('b', {}, gs(p.total)), `. Ritmo de ${gs(p.ritmo)} por día los próximos ${p.restantes} días`);
+  if (p.fijos.length) {
+    const nombres = p.fijos.map((g) => nombreBonito(g.comercio).split(/[\s*]/)[0]).slice(0, 4).join(', ');
+    caja.append(' + suscripciones por cobrar (', el('b', {}, gs(suma(p.fijos))), `: ${nombres}${p.fijos.length > 4 ? '…' : ''})`);
+  }
+  caja.append('.');
+  if (ingresosMes) {
+    const queda = ingresosMes - p.total;
+    caja.append(' Con lo que entró hasta hoy, cerrarías ', el('b', { class: queda >= 0 ? 'positivo' : 'negativo' }, (queda >= 0 ? '+' : '−') + gs(Math.abs(queda))), '.');
+  }
+}
+
+/** Una vez por día pide al servidor los cobros mensuales que parecen suscripciones y no lo están. */
+async function cargarSuscNuevas(forzar) {
+  if (!conectado() || !state.online) return;
+  const hoy = ahoraLocal().slice(0, 10);
+  const guardado = await store.get('suscNuevas');
+  if (!forzar && guardado?.fecha === hoy) { state.suscNuevas = guardado.lista; return; }
+  try {
+    const r = await apiPost({ accion: 'suscripcionesNuevas' });
+    if (!r.ok) return;
+    state.suscNuevas = r.candidatos || [];
+    await store.set('suscNuevas', { fecha: hoy, lista: state.suscNuevas });
+    firmas.inicio = '';
+    render();
+  } catch { /* sin conexión: se reintenta en la próxima sincronización */ }
+}
+
+function renderAlertaSusc() {
+  const n = state.suscNuevas.length;
+  $('#alertaSusc').hidden = !n || state.mes !== mesActual();
+  $('#alertaSuscTit').textContent = n === 1
+    ? `¿${state.suscNuevas[0].nombre || nombreBonito(state.suscNuevas[0].comercio)} es una suscripción?`
+    : `${n} posibles suscripciones nuevas`;
+}
+$('#alertaSusc').addEventListener('click', () => cambiarVista('presupuesto'));
+
+function renderSuscNuevas() {
+  const caja = $('#suscNuevas');
+  caja.hidden = !state.suscNuevas.length;
+  caja.replaceChildren(
+    el('div', { class: 'susc-nuevas-tit' }, '✨ Posibles suscripciones nuevas'),
+    ...state.suscNuevas.map((c) => el('div', { class: 'susc-nueva' },
+      el('div', { class: 'info' },
+        el('b', {}, c.nombre || nombreBonito(c.comercio)),
+        el('small', {}, `${gs(c.monto)} por mes · ${c.meses} meses seguidos${c.motivo ? ' · ' + c.motivo : ''}`)),
+      el('div', { class: 'botones' },
+        el('button', { class: 'btn primario chico', type: 'button', onclick: () => resolverSusc(c, true) }, 'Sí'),
+        el('button', { class: 'btn chico', type: 'button', onclick: () => resolverSusc(c, false) }, 'No')),
+    )),
+  );
+}
+
+async function resolverSusc(c, es) {
+  vibrar(8);
+  state.suscNuevas = state.suscNuevas.filter((x) => x.clave !== c.clave);
+  await store.set('suscNuevas', { fecha: ahoraLocal().slice(0, 10), lista: state.suscNuevas });
+  firmas.inicio = '';
+  if (es) {
+    const g = gastosTodos().find((x) => x.id === c.id);
+    if (g) {
+      const { pendiente, ...gasto } = g;
+      const nuevo = { ...gasto, categoria: 'Suscripciones' };
+      await encolar({ accion: 'guardar', gasto: nuevo });
+      abrirRegla(nuevo); // ofrece la regla y cambiar los cobros anteriores
+    }
+  } else {
+    let descartadas = [];
+    try { descartadas = JSON.parse(localStorageGet('suscDescartadas') || '[]'); } catch { /* vacío */ }
+    descartadas = [...new Set([...descartadas, c.clave])];
+    localStorageSet('suscDescartadas', JSON.stringify(descartadas));
+    apiPost({ accion: 'ajuste', clave: 'susc_descartadas', valor: JSON.stringify(descartadas) }).catch(() => {});
+    toast('Listo, no te lo vuelvo a preguntar');
+  }
+  render();
+}
+
+/** Sueldo de SERCON: quincena (14/15) y fin de mes (28). GNB no avisa el depósito, así que se pregunta. */
+const PAGOS_SUELDO = [{ dia: 14, nombre: 'la quincena', monto: 3600000 }, { dia: 28, nombre: 'el sueldo de fin de mes', monto: 6600000 }];
+let sueldoPendiente = null;
+
+function renderAlertaSueldo(ingresos) {
+  sueldoPendiente = null;
+  const hoyTxt = ahoraLocal().slice(0, 10);
+  const hoy = new Date(hoyTxt + 'T12:00');
+  if (state.mes !== mesActual() || localStorageGet('sueldoNo') === hoyTxt) { $('#alertaSueldo').hidden = true; return; }
+  const sueldos = ingresos.filter((i) => i.categoria === 'Sueldo');
+  for (const delta of [0, -1]) {
+    const mes = moverMes(mesActual(), delta);
+    for (const p of PAGOS_SUELDO) {
+      const fecha = new Date(`${mes}-${String(p.dia).padStart(2, '0')}T12:00`);
+      const dif = (hoy - fecha) / 86400000;
+      if (dif < 0 || dif > 6) continue; // se pregunta desde el día de cobro y hasta 6 días después
+      const desde = new Date(fecha.getTime() - 4 * 86400000).toISOString().slice(0, 10);
+      const hasta = new Date(fecha.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+      const ya = sueldos.some((i) => i.fecha.slice(0, 10) >= desde && i.fecha.slice(0, 10) <= hasta);
+      if (ya) continue;
+      const anterior = sueldos.filter((i) => Math.abs(Number(i.fecha.slice(8, 10)) - p.dia) <= 4).sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
+      sueldoPendiente = { ...p, monto: anterior?.monto || p.monto };
+    }
+  }
+  $('#alertaSueldo').hidden = !sueldoPendiente;
+  if (sueldoPendiente) $('#alertaSueldoTit').textContent = `¿Cobraste ${sueldoPendiente.nombre} de SERCON?`;
+}
+$('#alertaSueldo').addEventListener('click', (ev) => {
+  if (ev.target.closest('#alertaSueldoNo')) {
+    localStorageSet('sueldoNo', ahoraLocal().slice(0, 10));
+    $('#alertaSueldo').hidden = true;
+    toast('Te vuelvo a preguntar mañana');
+    return;
+  }
+  if (!sueldoPendiente) return;
+  abrirIngreso(null, { categoria: 'Sueldo', pagador: 'SERCON S.A.', monto: sueldoPendiente.monto });
+});
 
 // ---------- Ingresos ----------
 
@@ -1153,12 +1314,12 @@ function renderIngresos() {
 
 const formIng = { editando: null, categoria: 'Ventas' };
 
-function abrirIngreso(i = null) {
+function abrirIngreso(i = null, sugerido = null) {
   formIng.editando = i;
-  formIng.categoria = i?.categoria || 'Ventas';
-  $('#ingTitulo').textContent = i ? 'Ingreso' : 'Nuevo ingreso';
-  $('#iMonto').value = i ? fmt.format(i.monto) : '';
-  $('#iPagador').value = i?.pagador || '';
+  formIng.categoria = i?.categoria || sugerido?.categoria || 'Ventas';
+  $('#ingTitulo').textContent = i ? 'Ingreso' : sugerido ? 'Confirmar sueldo' : 'Nuevo ingreso';
+  $('#iMonto').value = i ? fmt.format(i.monto) : sugerido?.monto ? fmt.format(sugerido.monto) : '';
+  $('#iPagador').value = i?.pagador || sugerido?.pagador || '';
   $('#iFecha').value = i ? i.fecha.replace(' ', 'T') : (state.mes === mesActual() ? ahoraLocal() : state.mes + '-01T12:00');
   $('#btnBorrarIng').hidden = !i;
   pintarCatsIngreso();
@@ -1877,6 +2038,7 @@ state.config = (await store.get('config')) || state.config;
 state.todos = (await store.get('gastos:todos')) || [];
 state.ingresos = (await store.get('ingresos:todos')) || [];
 state.ia = (await store.get('ia')) || state.ia;
+state.suscNuevas = (await store.get('suscNuevas'))?.lista || [];
 state.cola = await store.cola();
 state.discreto = localStorageGet('discreto') === '1';
 aplicarDiscreto();

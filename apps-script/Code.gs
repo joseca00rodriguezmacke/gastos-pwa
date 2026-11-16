@@ -139,6 +139,9 @@ function doPost(e) {
       if (accion === 'ajuste') return { ok: true, ajustes: guardarAjuste(String(body.clave || ''), body.valor) };
       if (accion === 'iaMantenimiento') return { ok: true, resultado: unificarComerciosExistentes() };
       if (accion === 'resumenAhora') return { ok: true, resumen: resumenSemanal(true) };
+      if (accion === 'simular') return { ok: true, respuesta: simular(String(body.escenario || '')) };
+      if (accion === 'explicar') return { ok: true, respuesta: explicarMes(String(body.mes || '')) };
+      if (accion === 'suscripcionesNuevas') return { ok: true, candidatos: suscripcionesNuevas() };
       if (accion === 'guardar') {
         const crudo = body.gasto || body;
         let gasto;
@@ -990,7 +993,7 @@ function titulo(s) {
 // A Gemini se le manda lo mínimo: textos de avisos, nombres de comercios y montos agregados;
 // nunca el token ni números de cuenta.
 
-const IA_MODELO_DEFECTO = 'gemini-2.5-flash';
+const IA_MODELO_DEFECTO = 'gemini-3.8-flash';
 
 function iaDisponible() {
   return !!String(ajustes().gemini_key || '').trim();
@@ -1004,14 +1007,30 @@ function gemini(prompt, json) {
   const modelo = String(aj.gemini_modelo || IA_MODELO_DEFECTO).trim();
   const cuerpo = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } };
   if (json) cuerpo.generationConfig.responseMimeType = 'application/json';
-  const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'x-goog-api-key': clave },
-    payload: JSON.stringify(cuerpo),
-    muteHttpExceptions: true,
-  });
-  if (r.getResponseCode() !== 200) throw new Error('Gemini ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 200));
+  let usado = modelo;
+  let r;
+  // Saturación (429/5xx): hasta 3 intentos. Modelo retirado (404 que sugiere otro): se cambia solo y se guarda.
+  let reintentos = 0;
+  for (let vuelta = 0; vuelta < 5; vuelta++) {
+    r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + usado + ':generateContent', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-goog-api-key': clave },
+      payload: JSON.stringify(cuerpo),
+      muteHttpExceptions: true,
+    });
+    const code = r.getResponseCode();
+    if (code === 200) break;
+    const sugerido = code === 404 && (r.getContentText().match(/use models\/([a-z0-9.\-]+)/i) || [])[1];
+    if (sugerido && sugerido !== usado) { usado = sugerido; fijarAjuste('gemini_modelo', usado); continue; }
+    if ((code === 429 || code >= 500) && reintentos < 2) { reintentos++; Utilities.sleep(1500 * reintentos); continue; }
+    break;
+  }
+  if (r.getResponseCode() !== 200) {
+    const code = r.getResponseCode();
+    if (code === 429 || code >= 500) throw new Error('La IA de Google está saturada en este momento, probá de nuevo en un rato');
+    throw new Error('Gemini ' + code + ': ' + r.getContentText().slice(0, 200));
+  }
   const datos = JSON.parse(r.getContentText());
   const texto = ((((datos.candidates || [])[0] || {}).content || {}).parts || []).map(function (p) { return p.text || ''; }).join('').trim();
   if (!json) return texto;
@@ -1042,7 +1061,7 @@ function infoIA() {
   };
 }
 
-const AJUSTES_EDITABLES = ['meta_ahorro'];
+const AJUSTES_EDITABLES = ['meta_ahorro', 'susc_descartadas'];
 
 function guardarAjuste(clave, valor) {
   if (AJUSTES_EDITABLES.indexOf(clave) === -1) throw new Error('Ajuste no editable: ' + clave);
@@ -1247,6 +1266,110 @@ function contextoFinanciero(diasDetalle) {
 
 const ESTILO_IA = 'Respondé en español rioplatense, breve y concreto. Montos en guaraníes con punto de miles (ej. Gs 1.250.000). ' +
   'Usá solo los datos dados; si no alcanzan, decilo.';
+
+/** IA 6: "¿y si…?" — impacto mensual y anual de un cambio de hábito, con su promedio de los últimos 3 meses. */
+function simular(escenario) {
+  if (!escenario.trim()) throw new Error('Escribí un escenario');
+  if (!iaDisponible()) throw new Error('La IA no está configurada');
+  return gemini('Sos el asistente de finanzas personales del usuario y simulás escenarios "¿y si…?". ' + ESTILO_IA +
+    ' Usá el promedio mensual de los últimos 3 meses completos de las categorías y comercios involucrados (decí cuáles tomaste). ' +
+    'Respondé con: cuánto gasta hoy por mes en eso, cuánto ahorraría por mes y por año con el cambio, y a qué equivale ese ahorro ' +
+    '(ej. % de su gasto mensual o cuántos meses de alguna suscripción). Máximo 6 líneas.' +
+    '\n\nDatos (gastosRecientes: [fecha, monto, comercio, categoría]):\n' + JSON.stringify(contextoFinanciero(100)) +
+    '\n\nEscenario: ' + escenario.slice(0, 400), false);
+}
+
+/** IA 4: en una o dos frases, por qué este mes va distinto del anterior (mismo tramo de días). */
+function explicarMes(mes) {
+  if (!iaDisponible()) throw new Error('La IA no está configurada');
+  mes = mes || normalizarFecha('').slice(0, 7);
+  const hoy = normalizarFecha('');
+  const enCurso = hoy.slice(0, 7) === mes;
+  const dia = enCurso ? Number(hoy.slice(8, 10)) : 31;
+  const p = new Date(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)) - 2, 1);
+  const previo = Utilities.formatDate(p, TZ, 'yyyy-MM');
+  const contables = listarGastos('').filter(function (g) { return g.categoria !== POR_REVISAR && !g.tercero; });
+  const tramo = function (m) {
+    return contables.filter(function (g) { return g.fecha.indexOf(m) === 0 && Number(g.fecha.slice(8, 10)) <= dia; });
+  };
+  const resumir = function (lista) {
+    const cats = {};
+    lista.forEach(function (g) { cats[g.categoria] = (cats[g.categoria] || 0) + g.monto; });
+    return {
+      total: lista.reduce(function (t, g) { return t + g.monto; }, 0),
+      porCategoria: cats,
+      mayores: lista.slice().sort(function (a, b) { return b.monto - a.monto; }).slice(0, 8)
+        .map(function (g) { return [g.fecha.slice(0, 10), g.monto, g.comercio, g.categoria]; }),
+    };
+  };
+  const clave = 'explica-' + mes + '-' + dia + '-' + resumenHex(JSON.stringify([resumir(tramo(mes)), resumir(tramo(previo))]));
+  const cache = CacheService.getScriptCache();
+  const guardado = cache.get(clave);
+  if (guardado) return guardado;
+  const texto = gemini('Explicá en UNA o DOS frases cortas por qué el usuario gastó más o menos este mes que el anterior, ' +
+    (enCurso ? 'comparando ambos meses hasta el día ' + dia + '. ' : 'comparando los meses completos. ') +
+    'Nombrá las 1 o 2 causas principales con su monto (categoría o gasto puntual grande). Sin saludo ni viñetas. ' + ESTILO_IA +
+    '\n\nEste mes (' + mes + '): ' + JSON.stringify(resumir(tramo(mes))) +
+    '\nMes anterior (' + previo + '): ' + JSON.stringify(resumir(tramo(previo))), false);
+  cache.put(clave, texto, 6 * 3600);
+  return texto;
+}
+
+/**
+ * IA 3: cobros que se repiten todos los meses con monto parecido y todavía no están en Suscripciones.
+ * Sin IA devuelve los candidatos por regla; con IA, Gemini descarta los que no son servicios recurrentes.
+ */
+function suscripcionesNuevas() {
+  const hoy = normalizarFecha('');
+  const d = new Date(Number(hoy.slice(0, 4)), Number(hoy.slice(5, 7)) - 4, 1);
+  const desde = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+  let descartadas = [];
+  try { descartadas = JSON.parse(String(ajustes().susc_descartadas || '[]')); } catch (err) { /* lista vacía */ }
+  const grupos = {};
+  listarGastos('').forEach(function (g) {
+    if (g.fecha < desde || g.tercero || /^Transferencia a /i.test(g.comercio)) return;
+    if (['Suscripciones', POR_REVISAR, 'Transferencias', 'Créditos'].indexOf(g.categoria) !== -1) return;
+    const palabras = claveComercio(g.comercio).split(' ').filter(function (w) { return w.length > 1; });
+    if (!palabras.length) return;
+    const k = palabras[0].length >= 4 ? palabras[0] : palabras.slice(0, 2).join(' ');
+    (grupos[k] = grupos[k] || []).push(g);
+  });
+  const candidatos = [];
+  Object.keys(grupos).forEach(function (k) {
+    if (descartadas.indexOf(k) !== -1) return;
+    const lista = grupos[k];
+    const meses = {};
+    lista.forEach(function (g) { (meses[g.fecha.slice(0, 7)] = meses[g.fecha.slice(0, 7)] || []).push(g.monto); });
+    const claves = Object.keys(meses).sort();
+    if (claves.length < 2) return;
+    if (claves.some(function (m) { return meses[m].length > 2; })) return; // compras frecuentes, no un cobro mensual
+    const montos = claves.map(function (m) { return meses[m][0]; });
+    const ref = montos[montos.length - 1];
+    if (!montos.every(function (x) { return Math.abs(x - ref) <= ref * 0.15; })) return;
+    const ultimo = lista[0];
+    candidatos.push({ clave: k, comercio: ultimo.comercio, categoria: ultimo.categoria, monto: ref, meses: claves.length, ultimo: ultimo.fecha.slice(0, 10), id: ultimo.id });
+  });
+  if (!candidatos.length || !iaDisponible()) {
+    return candidatos.filter(function (c) { return ['Supermercado', 'Combustible', 'Restaurantes'].indexOf(c.categoria) === -1; });
+  }
+  const cache = CacheService.getScriptCache();
+  const clave = 'susc-' + resumenHex(JSON.stringify(candidatos));
+  const enCache = cache.get(clave);
+  if (enCache) return JSON.parse(enCache);
+  const r = geminiSeguro('Estos comercios le cobran al usuario casi el mismo monto una vez por mes. Decidí cuáles son ' +
+    'servicios o suscripciones recurrentes (streaming, software, telefonía, internet, gimnasio, seguros, cuotas de servicio, etc.) ' +
+    'y cuáles son compras que casualmente se repiten (supermercado, combustible, restaurantes). ' +
+    'Devolvé SOLO un JSON: [{"clave": "...", "nombre": "nombre comercial limpio", "motivo": "frase corta"}] con los que SÍ son recurrentes.\n\n' +
+    JSON.stringify(candidatos.map(function (c) { return { clave: c.clave, comercio: c.comercio, categoria: c.categoria, monto: c.monto, meses: c.meses }; })),
+    true, 'suscripciones nuevas');
+  if (!Array.isArray(r)) return candidatos.filter(function (c) { return ['Supermercado', 'Combustible', 'Restaurantes'].indexOf(c.categoria) === -1; });
+  const elegidos = r.map(function (x) {
+    const c = candidatos.filter(function (y) { return y.clave === String(x && x.clave); })[0];
+    return c ? Object.assign({}, c, { nombre: String(x.nombre || '').slice(0, 60), motivo: String(x.motivo || '').slice(0, 120) }) : null;
+  }).filter(Boolean);
+  cache.put(clave, JSON.stringify(elegidos), 12 * 3600);
+  return elegidos;
+}
 
 function preguntarGastos(pregunta) {
   if (!pregunta.trim()) throw new Error('Escribí una pregunta');

@@ -581,3 +581,18 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 .comp-barra i { display: block; height: 100%; border-radius: 99px; }
 .comp-barra i.sube { background: var(--critical); }
 .comp-barra i.baja { background: var(--good-text); }
+
+/* Pronóstico, suscripciones nuevas y aviso de sueldo */
+.pronostico { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pronostico .positivo { color: var(--good-text); }
+.pronostico .negativo { color: var(--critical); }
+.alerta-sueldo .alerta-ico { background: var(--accent-soft); color: var(--text); }
+.alerta-acciones { display: grid; gap: 4px; justify-items: end; }
+.alerta-no { font-size: .74rem; color: var(--muted); padding: 2px 0; }
+.susc-nuevas { display: grid; gap: 10px; margin: 4px 0 14px; padding: 12px; border-radius: var(--radio-s); background: var(--accent-soft); }
+.susc-nuevas-tit { font-size: .8rem; font-weight: 700; }
+.susc-nueva { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.susc-nueva .info { display: grid; gap: 2px; min-width: 0; }
+.susc-nueva .info small { color: var(--muted); font-size: .74rem; }
+.susc-nueva .botones { display: flex; gap: 6px; flex-shrink: 0; }
+.btn.chico { padding: 6px 12px; font-size: .8rem; min-height: 0; }
