@@ -1017,6 +1017,14 @@ function gemini(prompt, json) {
     });
   };
   const saturado = function (code) { return code === 429 || code >= 500; };
+  // Si hace poco el principal estaba saturado y otro respondió, se usa ese directo (1 h).
+  const cacheIA = CacheService.getScriptCache();
+  const activo = cacheIA.get('modelo-activo');
+  if (activo) {
+    const rapido = pedir(activo);
+    if (rapido.getResponseCode() === 200) return leerRespuestaGemini(rapido, json);
+    cacheIA.remove('modelo-activo');
+  }
   let r = pedir(principal);
   // Modelo retirado (404 que sugiere otro): se cambia solo y se guarda.
   const sugerido = r.getResponseCode() === 404 && (r.getContentText().match(/use models\/([a-z0-9.\-]+)/i) || [])[1];
@@ -1032,13 +1040,20 @@ function gemini(prompt, json) {
   }
   if (saturado(r.getResponseCode())) {
     const alternativos = modelosAlternativos(clave, principal);
-    for (let i = 0; i < alternativos.length && i < 3 && saturado(r.getResponseCode()); i++) r = pedir(alternativos[i]);
+    for (let i = 0; i < alternativos.length && i < 3 && saturado(r.getResponseCode()); i++) {
+      r = pedir(alternativos[i]);
+      if (r.getResponseCode() === 200) cacheIA.put('modelo-activo', alternativos[i], 3600);
+    }
   }
   if (r.getResponseCode() !== 200) {
     const code = r.getResponseCode();
     if (saturado(code)) throw new Error('La IA de Google está saturada en este momento, probá de nuevo en un rato');
     throw new Error('Gemini ' + code + ': ' + r.getContentText().slice(0, 200));
   }
+  return leerRespuestaGemini(r, json);
+}
+
+function leerRespuestaGemini(r, json) {
   const datos = JSON.parse(r.getContentText());
   const texto = ((((datos.candidates || [])[0] || {}).content || {}).parts || []).map(function (p) { return p.text || ''; }).join('').trim();
   if (!json) return texto;
@@ -1306,7 +1321,9 @@ function simular(escenario) {
   if (!escenario.trim()) throw new Error('Escribí un escenario');
   if (!iaDisponible()) throw new Error('La IA no está configurada');
   return gemini('Sos el asistente de finanzas personales del usuario y simulás escenarios "¿y si…?". ' + ESTILO_IA +
-    ' Usá el promedio mensual de los últimos 3 meses completos de las categorías y comercios involucrados (decí cuáles tomaste). ' +
+    ' Calculá el gasto mensual actual de las categorías y comercios involucrados con el promedio de los meses que haya (hasta 3); ' +
+    'si solo hay el mes en curso, proyectalo a mes completo según los días transcurridos y aclaralo en una frase. ' +
+    'Si el escenario menciona algo que no aparece tal cual (ej. delivery), usá comercios o categorías parecidas y decí cuáles. ' +
     'Respondé con: cuánto gasta hoy por mes en eso, cuánto ahorraría por mes y por año con el cambio, y a qué equivale ese ahorro ' +
     '(ej. % de su gasto mensual o cuántos meses de alguna suscripción). Máximo 6 líneas.' +
     '\n\nDatos (gastosRecientes: [fecha, monto, comercio, categoría]):\n' + JSON.stringify(contextoFinanciero(100)) +
