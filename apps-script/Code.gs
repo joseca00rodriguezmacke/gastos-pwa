@@ -130,7 +130,7 @@ function doPost(e) {
         };
       }
       if (accion === 'sms' || (body.texto !== undefined && body.accion === undefined)) {
-        const r = procesarAviso(conLectorIA(parsearSms(body.texto), body.texto, 'sms'));
+        const r = procesarAviso(parsearSms(body.texto));
         return { ok: true, resultado: r.resultado, gasto: r.gasto, mensaje: r.mensaje };
       }
       if (accion === 'sugerencias') return { ok: true, sugerencias: sugerirPorRevisar() };
@@ -851,6 +851,43 @@ function procesarCorreos() {
     CACHE_REGISTRO = null;
     lock.releaseLock();
   }
+  try { tareasIA(); } catch (err) { registrar('ia', 'tareas-' + Date.now(), 'error: ' + err.message, 'tareas de fondo'); }
+}
+
+/**
+ * IA en segundo plano (después de leer los correos, sin bloquear Apple Pay ni SMS):
+ * nombre y categoría de comercios nuevos y lectura de SMS con formato desconocido.
+ */
+function tareasIA() {
+  if (!iaDisponible()) return;
+  const cache = CacheService.getScriptCache();
+  if (cache.get('ia-corriendo')) return;
+  cache.put('ia-corriendo', '1', 330);
+  const inicio = Date.now();
+  try {
+    unificarComerciosExistentes(20);
+    // SMS de los últimos 3 días que el lector fijo no reconoció: hasta 3 intentos por aviso.
+    const hace3 = Utilities.formatDate(new Date(Date.now() - 3 * 86400000), TZ, 'yyyy-MM-dd HH:mm');
+    const vistos = {};
+    filasRegistro().slice(1).reverse().forEach(function (f) {
+      if (String(f[1]) !== 'sms' || !/^ignorado: formato/.test(String(f[3]))) return;
+      if (textoFecha(f[0]) < hace3 || vistos[String(f[2])]) return;
+      vistos[String(f[2])] = String(f[4]);
+    });
+    Object.keys(vistos).forEach(function (id) {
+      if (Date.now() - inicio > 150000 || yaRegistrado(id)) return;
+      const k = 'ia-sms-' + id;
+      const intentos = Number(cache.get(k) || 0);
+      if (intentos >= 3) return;
+      cache.put(k, String(intentos + 1), 6 * 3600);
+      const texto = vistos[id];
+      const av = parsearSms(texto);
+      const leido = conLectorIA(av, texto, 'sms');
+      if (leido && leido.porIA) procesarAviso(leido);
+    });
+  } finally {
+    cache.remove('ia-corriendo');
+  }
 }
 
 /** Ejecutar una vez: crea Registro/Ajustes, la categoría Transferencias y el activador de correos. */
@@ -1172,7 +1209,7 @@ function nombresCategorias() {
 }
 
 /** Nombre limpio y categoría de un comercio: primero la hoja Comercios, si no, la IA (y se guarda). */
-function infoComercio(comercio) {
+function infoComercio(comercio, conIA) {
   const clave = claveComercio(comercio);
   if (!clave) return null;
   const sh = SpreadsheetApp.getActive().getSheetByName('Comercios');
@@ -1180,7 +1217,7 @@ function infoComercio(comercio) {
     const fila = leerObjetos('Comercios').filter(function (r) { return String(r.clave) === clave; })[0];
     if (fila) return { nombre: String(fila.nombre || ''), categoria: String(fila.categoria || '') };
   }
-  if (!iaDisponible()) return null;
+  if (!conIA || !iaDisponible()) return null; // en Apple Pay/SMS no se espera a la IA: lo clasifica tareasIA()
   const r = clasificarComerciosIA([comercio])[0];
   if (!r) return null;
   guardarComercio(clave, r.nombre, r.categoria, 'ia');
@@ -1216,7 +1253,7 @@ function guardarComercio(clave, nombre, categoria, fuente) {
 }
 
 /** Una vez: unifica nombres de comercios ya registrados y categoriza los que estaban en "Otros". */
-function unificarComerciosExistentes() {
+function unificarComerciosExistentes(limite) {
   if (!iaDisponible()) throw new Error('Falta la clave de Gemini en la hoja Ajustes');
   asegurarHojasLecturas();
   const sh = hoja('Gastos');
@@ -1233,6 +1270,7 @@ function unificarComerciosExistentes() {
     const k = claveComercio(com);
     if (k && !conocidos[k] && nuevos.indexOf(com) === -1 && !nuevos.some(function (x) { return claveComercio(x) === k; })) nuevos.push(com);
   }
+  if (limite) nuevos.splice(limite);
   for (let i = 0; i < nuevos.length; i += 40) {
     const lote = nuevos.slice(i, i + 40);
     clasificarComerciosIA(lote).forEach(function (r, j) {
