@@ -219,7 +219,7 @@ function guardarGasto(g, soloSiNuevo) {
     tercero: String(g.tercero || '').trim(),
   };
   // Comercio de un aviso automático: nombre unificado y, si ninguna regla lo clasificó, categoría sugerida por IA.
-  if (!String(g.categoria || '').trim() && FUENTES_AUTOMATICAS.indexOf(fuenteDe(origen)) !== -1 && comercio && !/^Transferencia a /i.test(comercio)) {
+  if (!String(g.categoria || '').trim() && FUENTES_COMERCIO.indexOf(fuenteDe(origen)) !== -1 && comercio && !/^Transferencia a /i.test(comercio)) {
     const info = infoComercio(comercio);
     if (info) {
       if (info.nombre) gasto.comercio = info.nombre;
@@ -263,6 +263,7 @@ function guardarGasto(g, soloSiNuevo) {
 }
 
 const FUENTES_AUTOMATICAS = ['applepay', 'sms', 'mail'];
+const FUENTES_COMERCIO = ['applepay', 'sms']; // compras con tarjeta: las únicas que la IA renombra
 const VENTANA_FUSION_MIN = 30;
 const VENTANA_FUSION_SIN_COMERCIO_MIN = 5;
 const VENTANA_FUSION_MANUAL_MIN = 180; // un gasto cargado a mano + el aviso automático del mismo pago
@@ -284,7 +285,15 @@ function fusionarConExistente(sh, nuevo) {
     const f = datos[i];
     const origen = String(f[c.origen]);
     const fuentes = origen.split(' · ')[0].split('+');
-    if (fuentes.indexOf(fuente) !== -1) continue;
+    if (fuentes.indexOf(fuente) !== -1) {
+      // El atajo de Apple Pay a veces manda la misma compra dos veces (con y sin hora): mismo monto y comercio en 3 min.
+      const dif0 = Math.abs(minutosDe(textoFecha(f[c.fecha])) - t);
+      if (fuente === 'applepay' && Number(f[c.monto]) === nuevo.monto && mismoComercio(f[c.comercio], nuevo.comercio) && dif0 <= 3) {
+        const previo = { fecha: textoFecha(f[c.fecha]), monto: Number(f[c.monto]), comercio: String(f[c.comercio]), tarjeta: String(f[c.tarjeta]), categoria: String(f[c.categoria]), origen: origen, id: String(f[c.id]), etiqueta: String(f[c.etiqueta] || ''), tercero: String(f[c.tercero] || ''), fusionado: true };
+        return previo;
+      }
+      continue;
+    }
     const esManual = fuentes.indexOf('manual') !== -1;
     // Lo cargado a mano suele tener otro nombre y otra hora (se carga después), y a veces difiere en 1 Gs.
     if (esManual ? Math.abs(Number(f[c.monto]) - nuevo.monto) > 1 : Number(f[c.monto]) !== nuevo.monto) continue;
@@ -859,7 +868,7 @@ function procesarCorreos() {
  * nombre y categoría de comercios nuevos y lectura de SMS con formato desconocido.
  */
 function tareasIA() {
-  if (!iaDisponible()) return;
+  if (!iaDisponible() || iaEnPausa()) return;
   const cache = CacheService.getScriptCache();
   if (cache.get('ia-corriendo')) return;
   cache.put('ia-corriendo', '1', 330);
@@ -869,13 +878,15 @@ function tareasIA() {
     // SMS de los últimos 3 días que el lector fijo no reconoció: hasta 3 intentos por aviso.
     const hace3 = Utilities.formatDate(new Date(Date.now() - 3 * 86400000), TZ, 'yyyy-MM-dd HH:mm');
     const vistos = {};
+    let leidosIA = 0;
     filasRegistro().slice(1).reverse().forEach(function (f) {
       if (String(f[1]) !== 'sms' || !/^ignorado: formato/.test(String(f[3]))) return;
       if (textoFecha(f[0]) < hace3 || vistos[String(f[2])]) return;
       vistos[String(f[2])] = String(f[4]);
     });
     Object.keys(vistos).forEach(function (id) {
-      if (Date.now() - inicio > 150000 || yaRegistrado(id)) return;
+      if (Date.now() - inicio > 120000 || leidosIA >= 2 || iaEnPausa() || yaRegistrado(id)) return;
+      leidosIA++;
       const k = 'ia-sms-' + id;
       const intentos = Number(cache.get(k) || 0);
       if (intentos >= 3) return;
@@ -985,7 +996,9 @@ function esTitular(nombre, titular) {
   const t = palabras(titular);
   if (!n.length || !t.length) return false;
   const comunes = t.filter(function (w) { return n.indexOf(w) !== -1; }).length;
-  return comunes >= Math.min(3, t.length);
+  if (comunes >= Math.min(3, t.length)) return true;
+  // Abreviado: todas sus palabras son del titular, empieza por su primer nombre y trae al menos un apellido.
+  return n.length >= 2 && n[0] === t[0] && n.every(function (w) { return t.indexOf(w) !== -1; });
 }
 
 /** "CLOUDFLARE            SAN FRANCISCO USA" -> "CLOUDFLARE" (el SMS separa comercio y ciudad con varios espacios). */
@@ -1031,6 +1044,8 @@ function titulo(s) {
 // nunca el token ni números de cuenta.
 
 const IA_MODELO_DEFECTO = 'gemini-3.8-flash';
+const IA_PAUSA_SEG = 30 * 60;
+const iaEnPausa = function () { return !!CacheService.getScriptCache().get('ia-pausa'); };
 
 function iaDisponible() {
   return !!String(ajustes().gemini_key || '').trim();
@@ -1084,7 +1099,10 @@ function gemini(prompt, json) {
   }
   if (r.getResponseCode() !== 200) {
     const code = r.getResponseCode();
-    if (saturado(code)) throw new Error('La IA de Google está saturada en este momento, probá de nuevo en un rato');
+    if (saturado(code)) {
+      CacheService.getScriptCache().put('ia-pausa', '1', IA_PAUSA_SEG);
+      throw new Error('La IA de Google está saturada en este momento, probá de nuevo en un rato');
+    }
     throw new Error('Gemini ' + code + ': ' + r.getContentText().slice(0, 200));
   }
   return leerRespuestaGemini(r, json);
@@ -1126,7 +1144,7 @@ function modelosAlternativos(clave, principal) {
 
 /** Igual que gemini() pero nunca rompe: ante cualquier error devuelve null y lo anota en el Registro. */
 function geminiSeguro(prompt, json, contexto) {
-  if (!iaDisponible()) return null;
+  if (!iaDisponible() || iaEnPausa()) return null;
   try {
     return gemini(prompt, json);
   } catch (err) {
@@ -1265,7 +1283,7 @@ function unificarComerciosExistentes(limite) {
   const nuevos = [];
   for (let i = 1; i < datos.length; i++) {
     const com = String(datos[i][c.comercio]);
-    const auto = FUENTES_AUTOMATICAS.indexOf(fuenteDe(datos[i][c.origen])) !== -1;
+    const auto = FUENTES_COMERCIO.indexOf(fuenteDe(datos[i][c.origen])) !== -1;
     if (!auto || !com || /^Transferencia a /i.test(com)) continue;
     const k = claveComercio(com);
     if (k && !conocidos[k] && nuevos.indexOf(com) === -1 && !nuevos.some(function (x) { return claveComercio(x) === k; })) nuevos.push(com);
@@ -1284,7 +1302,7 @@ function unificarComerciosExistentes(limite) {
   for (let i = 1; i < datos.length; i++) {
     const f = datos[i];
     const com = String(f[c.comercio]);
-    const auto = FUENTES_AUTOMATICAS.indexOf(fuenteDe(f[c.origen])) !== -1;
+    const auto = FUENTES_COMERCIO.indexOf(fuenteDe(f[c.origen])) !== -1;
     const info = auto && conocidos[claveComercio(com)];
     if (!info) continue;
     let cambio = false;

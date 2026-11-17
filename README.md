@@ -152,6 +152,16 @@ Seguí la guía [`web/guia-atajo.html`](web/guia-atajo.html). También está en 
 
 ---
 
+## Pruebas automáticas (QA)
+
+Antes de publicar un cambio del backend:
+
+```bash
+node --test tests/escenarios.test.js
+```
+
+`tests/arnes.js` ejecuta `apps-script/Code.gs` real en Node con imitaciones de la planilla, Gmail, la caché y la IA (datos inventados). `tests/escenarios.test.js` cubre Apple Pay (reenvíos, con y sin hora, dólares, monto vacío), SMS de GNB y Continental (compra, pago de tarjeta, reverso, formato desconocido), fusiones Apple Pay + SMS + carga manual, mails de Familiar y GNB (enviadas, recibidas, cuentas propias, sueldo, duplicados), IA (sin clave, saturada, modelo retirado, tareas en segundo plano) y seguridad (token, JSON inválido, ajustes protegidos).
+
 ## Seguridad y límites
 
 - El token protege el endpoint de quien no lo conoce. Viaja en la URL de los GET, y en el iPhone queda guardado en la app y en el Atajo. Para uso personal alcanza, pero no es seguridad fuerte. Si se filtra, cambialo en **Propiedades del script** y actualizalo en la app y en el Atajo.

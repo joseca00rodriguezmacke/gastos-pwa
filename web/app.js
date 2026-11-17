@@ -259,22 +259,44 @@ const filaTip = (color, etiqueta, valor, punteada) =>
 
 const conectado = () => !!(state.conexion.url && state.conexion.token);
 
+// Google a veces corta una llamada al instante (devuelve una página de error) o la deja colgada.
+// Cada llamada tiene tiempo límite y se reintenta sola; todo lo que se guarda lleva id, así que repetir no duplica.
+const ACCIONES_IA = ['preguntar', 'consejo', 'simular', 'explicar', 'sugerencias', 'iaMantenimiento', 'resumenAhora'];
+const ESPERAS_REINTENTO = [1500, 4000];
+
+async function llamar(url, opciones, limiteMs) {
+  let ultimo;
+  for (let intento = 0; intento <= ESPERAS_REINTENTO.length; intento++) {
+    const ctrl = new AbortController();
+    const reloj = setTimeout(() => ctrl.abort(), limiteMs);
+    try {
+      const r = await fetch(url, { ...opciones, signal: ctrl.signal });
+      const texto = await r.text();
+      try { return JSON.parse(texto); } catch { throw new Error('Google respondió con un error momentáneo'); }
+    } catch (err) {
+      ultimo = err.name === 'AbortError' ? new Error('El servidor tardó demasiado') : err;
+      if (intento < ESPERAS_REINTENTO.length) await new Promise((ok) => setTimeout(ok, ESPERAS_REINTENTO[intento]));
+    } finally {
+      clearTimeout(reloj);
+    }
+  }
+  throw ultimo;
+}
+
 async function apiGet(params) {
   const url = new URL(state.conexion.url);
   url.searchParams.set('token', state.conexion.token);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const r = await fetch(url, { cache: 'no-store' });
-  return r.json();
+  return llamar(url, { cache: 'no-store' }, 30000);
 }
 
 async function apiPost(body) {
   // text/plain evita el preflight CORS, que Apps Script no responde.
-  const r = await fetch(state.conexion.url, {
+  return llamar(state.conexion.url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ ...body, token: state.conexion.token }),
-  });
-  return r.json();
+  }, ACCIONES_IA.includes(body.accion) ? 300000 : 45000);
 }
 
 const hayConfigPendiente = () => state.cola.some((i) => i.body.accion === 'config');
@@ -323,8 +345,13 @@ async function sincronizar() {
     state.sincronizando = false;
     render();
     if (repetirSync && !state.ultimoError) sincronizar();
+    else if (state.ultimoError && !errorDeAcceso(state.ultimoError)) {
+      clearTimeout(reintentoSync);
+      reintentoSync = setTimeout(() => { if (state.online && !document.hidden) sincronizar(); }, 30000);
+    }
   }
 }
+let reintentoSync = null;
 
 async function encolar(body) {
   await store.encolar({ body, creado: Date.now() });
